@@ -50,30 +50,31 @@ CURRENT_VERSION = "2.0.0"
 UPDATE_CHECK_URL = "https://api.github.com/repos/bounce12340/regulatory-review/releases/latest"
 OPENCLAW_GATEWAY_URL = "http://127.0.0.1:18789"
 
+
 def check_for_updates():
     """Check if a newer version is available."""
     try:
         import urllib.request
         import ssl
-        
+
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        
+
         req = urllib.request.Request(
             UPDATE_CHECK_URL,
             headers={"User-Agent": "RegulatoryReview-Desktop/2.0"}
         )
-        
+
         with urllib.request.urlopen(req, timeout=5, context=ctx) as response:
             data = json.loads(response.read().decode('utf-8'))
             latest_version = data.get('tag_name', 'v1.0.0').replace('v', '')
             download_url = data.get('html_url', '')
-            
+
             # Compare versions
             current = tuple(map(int, CURRENT_VERSION.split('.')))
             latest = tuple(map(int, latest_version.split('.')))
-            
+
             if latest > current:
                 return {
                     'available': True,
@@ -82,10 +83,11 @@ def check_for_updates():
                     'url': download_url,
                     'notes': data.get('body', 'No release notes')
                 }
-    except Exception as e:
+    except Exception:
         pass
-    
+
     return {'available': False, 'current': CURRENT_VERSION}
+
 
 def sync_to_openclaw(project_name: str, report_data: dict):
     """Sync updated report data to OpenClaw via WebSocket or file watch."""
@@ -93,9 +95,9 @@ def sync_to_openclaw(project_name: str, report_data: dict):
         # Method 1: Write to a sync file that OpenClaw can watch
         sync_dir = Path.home() / ".openclaw" / "workspace" / "regulatory-sync"
         sync_dir.mkdir(parents=True, exist_ok=True)
-        
+
         sync_file = sync_dir / f"{project_name}-sync-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
-        
+
         sync_data = {
             "type": "regulatory_update",
             "project": project_name,
@@ -103,10 +105,10 @@ def sync_to_openclaw(project_name: str, report_data: dict):
             "version": CURRENT_VERSION,
             "data": report_data
         }
-        
+
         with open(sync_file, 'w', encoding='utf-8') as f:
             json.dump(sync_data, f, ensure_ascii=False, indent=2)
-        
+
         # Method 2: Try to send via HTTP to OpenClaw gateway (if running)
         try:
             import urllib.request
@@ -116,15 +118,16 @@ def sync_to_openclaw(project_name: str, report_data: dict):
                 headers={'Content-Type': 'application/json'},
                 method='POST'
             )
-            with urllib.request.urlopen(req, timeout=2) as response:
+            with urllib.request.urlopen(req, timeout=2):
                 return {'success': True, 'method': 'http', 'file': str(sync_file)}
         except Exception:
             pass
-        
+
         return {'success': True, 'method': 'file', 'file': str(sync_file)}
-        
+
     except Exception as e:
         return {'success': False, 'error': str(e)}
+
 
 # ── Phase 4: AI document analysis ────────────────────────────────────────────
 _AI_AVAILABLE = False
@@ -132,16 +135,11 @@ try:
     _AI_ROOT = Path(__file__).parent.parent
     sys.path.insert(0, str(_AI_ROOT))
     from ai.gap_analyzer import GapAnalyzer, GapReport, SCHEMA_TYPE_MAP
-    from ai.upload_handler import DocumentParser
     _AI_AVAILABLE = True
-except Exception as _ai_err:
+except Exception:
     pass  # gracefully degrade if AI deps missing
 
-try:
-    from outputs.pdf_generator import PDFGenerator
-    PDF_AVAILABLE = True
-except Exception:
-    PDF_AVAILABLE = False
+PDF_AVAILABLE = False
 
 try:
     from outputs.word_generator import WordGenerator
@@ -1873,7 +1871,7 @@ def main():
 
         # Add New Task Section
         st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">➕</div> 新增審查項目</div>', unsafe_allow_html=True)
-        
+
         with st.form("add_task_form"):
             col1, col2 = st.columns(2)
             with col1:
@@ -1883,16 +1881,16 @@ def main():
                 new_item_status = st.selectbox("狀態", ["pending", "in_progress", "completed", "blocked", "under_review"])
                 new_item_risk = st.selectbox("風險等級", ["low", "medium", "high"])
             new_item_notes = st.text_area("備註", placeholder="輸入相關備註...")
-            
+
             submitted = st.form_submit_button("➕ 新增項目", use_container_width=True)
-            
+
             if submitted and new_item_name:
                 # Load existing report
                 report_path = projects_root / project_name / "review" / f"{project_name}-review-latest.json"
                 if report_path.exists():
                     with open(report_path, 'r', encoding='utf-8') as f:
                         existing_report = json.load(f)
-                    
+
                     # Add new item
                     new_item = {
                         "item": new_item_name,
@@ -1902,31 +1900,31 @@ def main():
                         "notes": new_item_notes,
                         "last_updated": datetime.now().isoformat()
                     }
-                    
+
                     if "items" not in existing_report:
                         existing_report["items"] = []
                     existing_report["items"].append(new_item)
-                    
+
                     # Update summary
                     total_items = len(existing_report["items"])
                     completed_items = sum(1 for i in existing_report["items"] if i.get("status") == "completed")
                     high_risk_items = sum(1 for i in existing_report["items"] if i.get("risk_level") == "high")
-                    
+
                     existing_report["summary"]["total"] = total_items
                     existing_report["summary"]["completed"] = completed_items
                     existing_report["summary"]["high_risk_items"] = high_risk_items
                     existing_report["completion_rate"] = f"{completed_items / total_items * 100:.1f}%"
                     existing_report["review_date"] = datetime.now().isoformat()
-                    
+
                     # Save updated report
                     with open(report_path, 'w', encoding='utf-8') as f:
                         json.dump(existing_report, f, ensure_ascii=False, indent=2)
-                    
+
                     st.success(f"✅ 已新增項目: {new_item_name}")
                     st.rerun()
                 else:
                     st.error("❌ 找不到專案報告檔案")
-        
+
         st.markdown('</div>', unsafe_allow_html=True)
 
         # Action items
@@ -1992,37 +1990,37 @@ def main():
 
         # Check for updates
         st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">🔄</div> 程式更新</div>', unsafe_allow_html=True)
-        
+
         if st.button("🔍 檢查更新", use_container_width=True):
             with st.spinner("檢查中..."):
                 update_info = check_for_updates()
-                
+
             if update_info.get('available'):
                 st.success(f"✅ 發現新版本: v{update_info['latest']}")
                 st.info(f"📋 更新說明: {update_info.get('notes', '無')[:200]}...")
                 st.markdown(f"[⬇️ 下載最新版本]({update_info['url']})", unsafe_allow_html=True)
             else:
                 st.info(f"✓ 目前版本 v{update_info['current']} 已是最新")
-        
+
         st.markdown('</div>', unsafe_allow_html=True)
 
         # OpenClaw Sync
         st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">☁️</div> OpenClaw 同步</div>', unsafe_allow_html=True)
-        
+
         if st.button("🔄 同步到 OpenClaw", use_container_width=True):
             with st.spinner("同步中..."):
                 sync_result = sync_to_openclaw(project_name, report)
-            
+
             if sync_result.get('success'):
                 st.success(f"✅ 同步成功！")
                 st.info(f"📁 同步檔案: {sync_result.get('file', 'N/A')}")
                 st.info(f"📡 同步方式: {sync_result.get('method', 'N/A')}")
-                
+
                 # Show OpenClaw link
                 st.markdown(f"[🌐 在 OpenClaw 中查看]({OPENCLAW_GATEWAY_URL})", unsafe_allow_html=True)
             else:
                 st.error(f"❌ 同步失敗: {sync_result.get('error', '未知錯誤')}")
-        
+
         st.markdown('</div>', unsafe_allow_html=True)
 
     # ── VIEW: TIMELINE ─────────────────────────────────────────────────────
