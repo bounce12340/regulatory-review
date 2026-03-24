@@ -762,23 +762,59 @@ def load_project_report(project_name: str, projects_root: Path = PROJECTS_ROOT) 
 def _demo_report(project: str) -> Dict:
     if project == "gastrilex":
         items = [
-            {"item": "食品業者登錄證明",        "category": "business_reg",   "status": "completed",    "notes": "已完成登錄",     "risk_level": "low"},
-            {"item": "產品配方及製造流程說明書",  "category": "formulation",    "status": "in_progress",  "notes": "配方修訂中",     "risk_level": "medium"},
-            {"item": "原料規格及來源證明",        "category": "raw_materials",  "status": "pending",      "notes": "等待供應商文件", "risk_level": "high"},
-            {"item": "成品檢驗規格及方法",        "category": "testing_specs",  "status": "under_review", "notes": "實驗室審查中",   "risk_level": "medium"},
-            {"item": "衛生安全性試驗報告",        "category": "safety_testing", "status": "pending",      "notes": "尚未開始",       "risk_level": "high"},
+            {
+                "item": "食品業者登錄證明", "category": "business_reg",
+                "status": "completed", "notes": "已完成登錄", "risk_level": "low",
+            },
+            {
+                "item": "產品配方及製造流程說明書", "category": "formulation",
+                "status": "in_progress", "notes": "配方修訂中", "risk_level": "medium",
+            },
+            {
+                "item": "原料規格及來源證明", "category": "raw_materials",
+                "status": "pending", "notes": "等待供應商文件", "risk_level": "high",
+            },
+            {
+                "item": "成品檢驗規格及方法", "category": "testing_specs",
+                "status": "under_review", "notes": "實驗室審查中", "risk_level": "medium",
+            },
+            {
+                "item": "衛生安全性試驗報告", "category": "safety_testing",
+                "status": "pending", "notes": "尚未開始", "risk_level": "high",
+            },
         ]
         completion = 20.0
         status = "needs_attention"
     else:
         items = [
-            {"item": "換發新證申請書",            "category": "license_renewal", "status": "in_progress",  "notes": "預計 2026-03-23 完成", "risk_level": "high"},
-            {"item": "成品製造廠 GMP 核備函",      "category": "gmp",             "status": "completed",    "notes": "GMP 展延已完成",       "risk_level": "low"},
-            {"item": "藥典/廠規檢驗規格變更備查",  "category": "specification",   "status": "under_review", "notes": "TFDA 審查中",          "risk_level": "medium"},
-            {"item": "原料藥製造廠 GMP 證明文件",  "category": "api_gmp",         "status": "completed",    "notes": "附 QR code GMP 證書",  "risk_level": "low"},
-            {"item": "非登不可上傳原料藥 GMP 文件","category": "api_upload",      "status": "blocked",      "notes": "QR code 驗證失敗",     "risk_level": "high"},
-            {"item": "成品元素不純物風險評估報告",  "category": "risk_assessment", "status": "completed",    "notes": "風險評估已核准",       "risk_level": "low"},
-            {"item": "ExPress 平臺上傳補正內容",   "category": "submission",      "status": "pending",      "notes": "等待所有文件就緒",     "risk_level": "medium"},
+            {
+                "item": "換發新證申請書", "category": "license_renewal",
+                "status": "in_progress", "notes": "預計 2026-03-23 完成", "risk_level": "high",
+            },
+            {
+                "item": "成品製造廠 GMP 核備函", "category": "gmp",
+                "status": "completed", "notes": "GMP 展延已完成", "risk_level": "low",
+            },
+            {
+                "item": "藥典/廠規檢驗規格變更備查", "category": "specification",
+                "status": "under_review", "notes": "TFDA 審查中", "risk_level": "medium",
+            },
+            {
+                "item": "原料藥製造廠 GMP 證明文件", "category": "api_gmp",
+                "status": "completed", "notes": "附 QR code GMP 證書", "risk_level": "low",
+            },
+            {
+                "item": "非登不可上傳原料藥 GMP 文件", "category": "api_upload",
+                "status": "blocked", "notes": "QR code 驗證失敗", "risk_level": "high",
+            },
+            {
+                "item": "成品元素不純物風險評估報告", "category": "risk_assessment",
+                "status": "completed", "notes": "風險評估已核准", "risk_level": "low",
+            },
+            {
+                "item": "ExPress 平臺上傳補正內容", "category": "submission",
+                "status": "pending", "notes": "等待所有文件就緒", "risk_level": "medium",
+            },
         ]
         completion = 42.9
         status = "needs_attention"
@@ -1251,7 +1287,11 @@ def render_projects_page():
         ]
 
     if project_list:
-        st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">📋</div> 現有專案</div>', unsafe_allow_html=True)
+        _html = (
+            '<div class="section-card">'
+            '<div class="section-title"><div class="title-icon">📋</div> 現有專案</div>'
+        )
+        st.markdown(_html, unsafe_allow_html=True)
         for p in project_list:
             dl_str = p["deadline"].strftime("%Y-%m-%d") if p["deadline"] else "未設定"
             schema_label = _SCHEMA_OPTIONS.get(p["schema_type"], p["schema_type"])
@@ -1280,7 +1320,11 @@ def render_projects_page():
 
     # ── Create new project form ────────────────────────────────────────
     if require_role("admin", "member"):
-        st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">➕</div> 建立新專案</div>', unsafe_allow_html=True)
+        _html = (
+            '<div class="section-card">'
+            '<div class="section-title"><div class="title-icon">➕</div> 建立新專案</div>'
+        )
+        st.markdown(_html, unsafe_allow_html=True)
         with st.form("create_project_form"):
             proj_name    = st.text_input("專案名稱", placeholder="Fenogal")
             schema_type  = st.selectbox("文件類型", options=list(_SCHEMA_OPTIONS.keys()),
@@ -1520,12 +1564,19 @@ def render_ai_analysis_page(dark: bool = False):
 
         for g in sorted(report.gaps, key=lambda x: {"high": 0, "medium": 1, "low": 2}.get(x.severity, 3)):
             icon = sev_icon.get(g.severity, "⚪")
-            sev_label_color = {"high": "#ef4444", "medium": "#f59e0b", "low": "#10b981"}.get(g.severity, "#94a3b8")
+            sev_label_color = {
+                "high": "#ef4444", "medium": "#f59e0b", "low": "#10b981"
+            }.get(g.severity, "#94a3b8")
             status_label = status_zh.get(g.status, g.status)
             with st.expander(f"{icon} {g.requirement}  —  {status_label}", expanded=(g.severity == "high")):
                 col_a, col_b = st.columns(2)
                 with col_a:
-                    st.markdown(f"**嚴重程度：** <span style='color:{sev_label_color};font-weight:600'>{g.severity.upper()}</span>", unsafe_allow_html=True)
+                    _sev_html = (
+                        f"**嚴重程度：** "
+                        f"<span style='color:{sev_label_color};font-weight:600'>"
+                        f"{g.severity.upper()}</span>"
+                    )
+                    st.markdown(_sev_html, unsafe_allow_html=True)
                     st.markdown(f"**說明：** {g.explanation}")
                 with col_b:
                     st.markdown(f"**建議：** {g.recommendation}")
@@ -1742,11 +1793,23 @@ def main():
         urgency_badge = ""
         if days_left is not None:
             if days_left < 30:
-                urgency_badge = '<span style="background:#fef2f2;color:#dc2626;padding:3px 10px;border-radius:999px;font-size:0.72rem;font-weight:600;margin-left:10px">🔴 緊急</span>'
+                urgency_badge = (
+                    '<span style="background:#fef2f2;color:#dc2626;'
+                    'padding:3px 10px;border-radius:999px;'
+                    'font-size:0.72rem;font-weight:600;margin-left:10px">🔴 緊急</span>'
+                )
             elif days_left < 90:
-                urgency_badge = '<span style="background:#fffbeb;color:#d97706;padding:3px 10px;border-radius:999px;font-size:0.72rem;font-weight:600;margin-left:10px">🟡 需關注</span>'
+                urgency_badge = (
+                    '<span style="background:#fffbeb;color:#d97706;'
+                    'padding:3px 10px;border-radius:999px;'
+                    'font-size:0.72rem;font-weight:600;margin-left:10px">🟡 需關注</span>'
+                )
             else:
-                urgency_badge = '<span style="background:#ecfdf5;color:#059669;padding:3px 10px;border-radius:999px;font-size:0.72rem;font-weight:600;margin-left:10px">🟢 進度正常</span>'
+                urgency_badge = (
+                    '<span style="background:#ecfdf5;color:#059669;'
+                    'padding:3px 10px;border-radius:999px;'
+                    'font-size:0.72rem;font-weight:600;margin-left:10px">🟢 進度正常</span>'
+                )
 
         doc_type  = report.get("document_type", "").replace("_", " ").title()
         rev_date  = report.get("review_date", "")[:10]
@@ -1803,28 +1866,51 @@ def main():
         # Charts row
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">🔵</div> Completion</div>', unsafe_allow_html=True)
+            _html = (
+                '<div class="section-card">'
+                '<div class="section-title"><div class="title-icon">🔵</div> Completion</div>'
+            )
+            st.markdown(_html, unsafe_allow_html=True)
             st.plotly_chart(build_progress_chart(report, dark), use_container_width=True, key="prog_chart")
             st.markdown('</div>', unsafe_allow_html=True)
         with c2:
-            st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">📊</div> Status Breakdown</div>', unsafe_allow_html=True)
+            _html = (
+                '<div class="section-card">'
+                '<div class="section-title"><div class="title-icon">📊</div> Status Breakdown</div>'
+            )
+            st.markdown(_html, unsafe_allow_html=True)
             st.plotly_chart(build_status_bar(items, dark), use_container_width=True, key="status_chart")
             st.markdown('</div>', unsafe_allow_html=True)
         with c3:
-            st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">⚠️</div> Risk Distribution</div>', unsafe_allow_html=True)
+            _html = (
+                '<div class="section-card">'
+                '<div class="section-title"><div class="title-icon">⚠️</div> Risk Distribution</div>'
+            )
+            st.markdown(_html, unsafe_allow_html=True)
             st.plotly_chart(build_risk_chart(items, dark), use_container_width=True, key="risk_chart")
             st.markdown('</div>', unsafe_allow_html=True)
 
         # Checklist table
-        st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">📋</div> Checklist Items</div>', unsafe_allow_html=True)
+        _html = (
+            '<div class="section-card">'
+            '<div class="section-title"><div class="title-icon">📋</div> Checklist Items</div>'
+        )
+        st.markdown(_html, unsafe_allow_html=True)
 
         # Filter controls
         f1, f2, f3 = st.columns([1, 1, 2])
         with f1:
             all_statuses = list({i.get("status", "pending") for i in items})
-            sel_status = st.multiselect("Filter by Status", all_statuses, default=all_statuses, label_visibility="collapsed", placeholder="All statuses")
+            sel_status = st.multiselect(
+                "Filter by Status", all_statuses, default=all_statuses,
+                label_visibility="collapsed", placeholder="All statuses"
+            )
         with f2:
-            sel_risk = st.multiselect("Filter by Risk", ["low", "medium", "high"], default=["low", "medium", "high"], label_visibility="collapsed", placeholder="All risk levels")
+            sel_risk = st.multiselect(
+                "Filter by Risk", ["low", "medium", "high"],
+                default=["low", "medium", "high"],
+                label_visibility="collapsed", placeholder="All risk levels"
+            )
         with f3:
             search_q = st.text_input("", placeholder="🔍  Search items...", label_visibility="collapsed")
 
@@ -1866,19 +1952,32 @@ def main():
             use_container_width=True,
             height=min(520, (len(filtered) + 1) * 38 + 6),
         )
-        st.markdown(f'<div style="font-size:0.75rem;color:#64748b;margin-top:6px">{len(filtered)} of {len(items)} items shown</div>', unsafe_allow_html=True)
+        _count_html = (
+            f'<div style="font-size:0.75rem;color:#64748b;margin-top:6px">'
+            f'{len(filtered)} of {len(items)} items shown</div>'
+        )
+        st.markdown(_count_html, unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
         # Add New Task Section
-        st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">➕</div> 新增審查項目</div>', unsafe_allow_html=True)
+        _html = (
+            '<div class="section-card">'
+            '<div class="section-title"><div class="title-icon">➕</div> 新增審查項目</div>'
+        )
+        st.markdown(_html, unsafe_allow_html=True)
 
         with st.form("add_task_form"):
             col1, col2 = st.columns(2)
             with col1:
                 new_item_name = st.text_input("項目名稱", placeholder="輸入審查項目名稱...")
-                new_item_category = st.selectbox("類別", ["document", "gmp", "specification", "risk_assessment", "platform_upload", "other"])
+                new_item_category = st.selectbox(
+                    "類別",
+                    ["document", "gmp", "specification", "risk_assessment", "platform_upload", "other"]
+                )
             with col2:
-                new_item_status = st.selectbox("狀態", ["pending", "in_progress", "completed", "blocked", "under_review"])
+                new_item_status = st.selectbox(
+                    "狀態", ["pending", "in_progress", "completed", "blocked", "under_review"]
+                )
                 new_item_risk = st.selectbox("風險等級", ["low", "medium", "high"])
             new_item_notes = st.text_area("備註", placeholder="輸入相關備註...")
 
