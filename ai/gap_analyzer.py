@@ -7,15 +7,13 @@ and LLM analysis to produce TFDA compliance gap reports.
 
 from __future__ import annotations
 
-import json
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import yaml
 
-from .upload_handler import DocumentParser, ParsedDocument
+from .upload_handler import DocumentParser
 from .llm_client import TFDAAnalysisClient
 from .vector_store import RegulationVectorStore, RegRequirement
 
