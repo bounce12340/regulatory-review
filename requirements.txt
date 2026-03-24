@@ -1,0 +1,44 @@
+# Python dependencies for Regulatory Review Tool
+# Generated: 2026-03-24
+
+# Core framework
+streamlit==1.32.0
+streamlit-authenticator==0.2.3
+
+# Data handling
+pandas==2.2.1
+numpy==1.26.4
+pyyaml==6.0.1
+python-dateutil==2.9.0
+
+# Visualization
+plotly==5.20.0
+
+# Export formats
+python-docx==1.1.0
+reportlab==4.1.0
+
+# HTTP requests (for update checking)
+requests==2.31.0
+urllib3==2.2.1
+
+# Database
+psycopg2-binary==2.9.9
+supabase==2.4.0
+
+# Authentication
+PyJWT==2.8.0
+bcrypt==4.1.2
+
+# Utilities
+python-dotenv==1.0.1
+pytz==2024.1
+
+# Rich console (for CLI)
+rich==13.7.1
+
+# Development (optional)
+pytest==8.1.1
+pytest-cov==4.1.0
+black==24.3.0
+flake8==7.0.0
