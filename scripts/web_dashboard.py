@@ -1,0 +1,1567 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Regulatory Review Web Dashboard (Streamlit) — Modern Figma-style UI
+Interactive dashboard for monitoring regulatory project status
+"""
+
+import json
+import sys
+from pathlib import Path
+from datetime import datetime, date, timedelta
+from typing import Dict, List, Optional
+
+# ── Streamlit & Plotly ───────────────────────────────────────────────────────
+try:
+    import streamlit as st
+    import plotly.express as px
+    import plotly.graph_objects as go
+    import pandas as pd
+    STREAMLIT_AVAILABLE = True
+except ImportError:
+    STREAMLIT_AVAILABLE = False
+    print("Install with: pip install streamlit plotly pandas")
+    sys.exit(1)
+
+# ── Local imports (optional) ─────────────────────────────────────────────────
+SCRIPTS_DIR = Path(__file__).parent
+sys.path.insert(0, str(SCRIPTS_DIR))
+
+# ── Update check & OpenClaw sync ───────────────────────────────────────────
+CURRENT_VERSION = "2.0.0"
+UPDATE_CHECK_URL = "https://api.github.com/repos/bounce12340/regulatory-review/releases/latest"
+OPENCLAW_GATEWAY_URL = "http://127.0.0.1:18789"
+
+def check_for_updates():
+    """Check if a newer version is available."""
+    try:
+        import urllib.request
+        import ssl
+        
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        
+        req = urllib.request.Request(
+            UPDATE_CHECK_URL,
+            headers={"User-Agent": "RegulatoryReview-Desktop/2.0"}
+        )
+        
+        with urllib.request.urlopen(req, timeout=5, context=ctx) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            latest_version = data.get('tag_name', 'v1.0.0').replace('v', '')
+            download_url = data.get('html_url', '')
+            
+            # Compare versions
+            current = tuple(map(int, CURRENT_VERSION.split('.')))
+            latest = tuple(map(int, latest_version.split('.')))
+            
+            if latest > current:
+                return {
+                    'available': True,
+                    'current': CURRENT_VERSION,
+                    'latest': latest_version,
+                    'url': download_url,
+                    'notes': data.get('body', 'No release notes')
+                }
+    except Exception as e:
+        pass
+    
+    return {'available': False, 'current': CURRENT_VERSION}
+
+def sync_to_openclaw(project_name: str, report_data: dict):
+    """Sync updated report data to OpenClaw via WebSocket or file watch."""
+    try:
+        # Method 1: Write to a sync file that OpenClaw can watch
+        sync_dir = Path.home() / ".openclaw" / "workspace" / "regulatory-sync"
+        sync_dir.mkdir(parents=True, exist_ok=True)
+        
+        sync_file = sync_dir / f"{project_name}-sync-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+        
+        sync_data = {
+            "type": "regulatory_update",
+            "project": project_name,
+            "timestamp": datetime.now().isoformat(),
+            "version": CURRENT_VERSION,
+            "data": report_data
+        }
+        
+        with open(sync_file, 'w', encoding='utf-8') as f:
+            json.dump(sync_data, f, ensure_ascii=False, indent=2)
+        
+        # Method 2: Try to send via HTTP to OpenClaw gateway (if running)
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                f"{OPENCLAW_GATEWAY_URL}/api/v1/sync",
+                data=json.dumps(sync_data).encode('utf-8'),
+                headers={'Content-Type': 'application/json'},
+                method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=2) as response:
+                return {'success': True, 'method': 'http', 'file': str(sync_file)}
+        except:
+            pass
+        
+        return {'success': True, 'method': 'file', 'file': str(sync_file)}
+        
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+try:
+    from outputs.pdf_generator import PDFGenerator
+    PDF_AVAILABLE = True
+except Exception:
+    PDF_AVAILABLE = False
+
+try:
+    from outputs.word_generator import WordGenerator
+    WORD_AVAILABLE = True
+except Exception:
+    WORD_AVAILABLE = False
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+PROJECTS_ROOT = Path.home() / "productivity" / "projects"
+
+DEADLINES: Dict[str, date] = {
+    "fenogal":   date(2026, 5, 18),
+    "gastrilex": date(2026, 6, 30),
+}
+
+STATUS_COLORS = {
+    "completed":    "#10b981",
+    "in_progress":  "#f59e0b",
+    "under_review": "#3b82f6",
+    "blocked":      "#ef4444",
+    "pending":      "#94a3b8",
+}
+
+STATUS_ICONS = {
+    "completed":    "✓",
+    "in_progress":  "◐",
+    "under_review": "◉",
+    "blocked":      "✕",
+    "pending":      "○",
+}
+
+RISK_COLORS = {
+    "low":    "#10b981",
+    "medium": "#f59e0b",
+    "high":   "#ef4444",
+}
+
+# Design tokens
+NAVY     = "#1e3a5c"
+ACCENT   = "#3b82f6"
+LIGHT_BG = "#f8fafc"
+CARD_BG  = "#ffffff"
+BORDER   = "#e2e8f0"
+TEXT_PRI = "#1e293b"
+TEXT_SEC = "#64748b"
+
+# ── CSS injection ─────────────────────────────────────────────────────────────
+
+LIGHT_CSS = """
+<style>
+/* ── Google Fonts ── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* ── Reset / Base ── */
+html, body, [class*="css"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+}
+
+/* ── App background ── */
+.stApp {
+    background: #f1f5f9 !important;
+}
+
+/* ── Hide default Streamlit decorations ── */
+#MainMenu, footer, header { visibility: hidden; }
+.block-container {
+    padding-top: 1.5rem !important;
+    padding-bottom: 2rem !important;
+    max-width: 1400px !important;
+}
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {
+    background: #1e3a5c !important;
+    border-right: none !important;
+}
+[data-testid="stSidebar"] * {
+    color: #e2e8f0 !important;
+}
+[data-testid="stSidebar"] .stSelectbox label,
+[data-testid="stSidebar"] .stTextInput label,
+[data-testid="stSidebar"] .stCheckbox label {
+    color: #94a3b8 !important;
+    font-size: 0.75rem !important;
+    font-weight: 500 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+}
+[data-testid="stSidebar"] [data-baseweb="select"] > div {
+    background: rgba(255,255,255,0.08) !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    border-radius: 8px !important;
+    color: #f1f5f9 !important;
+}
+[data-testid="stSidebar"] input {
+    background: rgba(255,255,255,0.08) !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    border-radius: 8px !important;
+    color: #f1f5f9 !important;
+}
+[data-testid="stSidebar"] hr {
+    border-color: rgba(255,255,255,0.12) !important;
+}
+
+/* ── Sidebar logo strip ── */
+.sidebar-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 0 16px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.12);
+    margin-bottom: 20px;
+}
+.sidebar-logo-icon {
+    width: 36px;
+    height: 36px;
+    background: linear-gradient(135deg, #3b82f6, #6366f1);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+}
+.sidebar-logo-text {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #f1f5f9 !important;
+    line-height: 1.3;
+}
+.sidebar-logo-sub {
+    font-size: 0.7rem;
+    color: #94a3b8 !important;
+    font-weight: 400;
+}
+
+/* ── Sidebar nav item ── */
+.nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    margin-bottom: 4px;
+    cursor: pointer;
+    transition: background 0.15s;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #94a3b8 !important;
+}
+.nav-item:hover { background: rgba(255,255,255,0.08); color: #f1f5f9 !important; }
+.nav-item.active { background: rgba(59,130,246,0.25); color: #60a5fa !important; }
+.nav-item .nav-icon { width: 18px; text-align: center; }
+
+/* ── Page header ── */
+.page-header {
+    background: linear-gradient(135deg, #1e3a5c 0%, #1e40af 100%);
+    border-radius: 16px;
+    padding: 28px 32px;
+    margin-bottom: 24px;
+    color: white;
+    box-shadow: 0 4px 24px rgba(30,58,92,0.18);
+}
+.page-header-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+}
+.page-header h1 {
+    font-size: 1.75rem !important;
+    font-weight: 700 !important;
+    color: white !important;
+    margin: 0 0 6px 0 !important;
+    line-height: 1.2 !important;
+}
+.page-header-sub {
+    font-size: 0.85rem;
+    color: rgba(255,255,255,0.65);
+    margin: 0;
+}
+
+/* ── KPI / Metric cards ── */
+.kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+.kpi-card {
+    background: white;
+    border-radius: 12px;
+    padding: 20px 22px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04);
+    border: 1px solid #e2e8f0;
+    position: relative;
+    overflow: hidden;
+    transition: box-shadow 0.2s, transform 0.2s;
+}
+.kpi-card:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.10);
+    transform: translateY(-2px);
+}
+.kpi-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    border-radius: 12px 12px 0 0;
+}
+.kpi-card.blue::before   { background: #3b82f6; }
+.kpi-card.green::before  { background: #10b981; }
+.kpi-card.amber::before  { background: #f59e0b; }
+.kpi-card.red::before    { background: #ef4444; }
+.kpi-card.purple::before { background: #8b5cf6; }
+.kpi-icon {
+    width: 38px; height: 38px;
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+    margin-bottom: 12px;
+}
+.kpi-icon.blue   { background: #eff6ff; }
+.kpi-icon.green  { background: #ecfdf5; }
+.kpi-icon.amber  { background: #fffbeb; }
+.kpi-icon.red    { background: #fef2f2; }
+.kpi-icon.purple { background: #f5f3ff; }
+.kpi-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #1e293b;
+    line-height: 1;
+    margin-bottom: 4px;
+}
+.kpi-label {
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.kpi-delta {
+    font-size: 0.75rem;
+    font-weight: 500;
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.kpi-delta.warn { color: #ef4444; }
+.kpi-delta.ok   { color: #10b981; }
+
+/* ── Section card wrapper ── */
+.section-card {
+    background: white;
+    border-radius: 12px;
+    padding: 20px 22px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04);
+    border: 1px solid #e2e8f0;
+    margin-bottom: 20px;
+}
+.section-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #1e293b;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.section-title .title-icon {
+    width: 28px; height: 28px;
+    background: #eff6ff;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+}
+
+/* ── Progress bar ── */
+.prog-bar-wrap {
+    background: #f1f5f9;
+    border-radius: 999px;
+    height: 8px;
+    overflow: hidden;
+    margin-top: 6px;
+}
+.prog-bar-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #3b82f6, #6366f1);
+    transition: width 0.5s ease;
+}
+.prog-bar-fill.warn { background: linear-gradient(90deg, #f59e0b, #ef4444); }
+.prog-bar-fill.ok   { background: linear-gradient(90deg, #10b981, #34d399); }
+.prog-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.78rem;
+    color: #64748b;
+    margin-bottom: 4px;
+}
+
+/* ── Badge ── */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+}
+.badge-completed    { background: #ecfdf5; color: #059669; }
+.badge-in_progress  { background: #fffbeb; color: #d97706; }
+.badge-under_review { background: #eff6ff; color: #2563eb; }
+.badge-blocked      { background: #fef2f2; color: #dc2626; }
+.badge-pending      { background: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; }
+.badge-low    { background: #ecfdf5; color: #059669; }
+.badge-medium { background: #fffbeb; color: #d97706; }
+.badge-high   { background: #fef2f2; color: #dc2626; }
+
+/* ── Action item row ── */
+.action-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid #fee2e2;
+    background: #fff5f5;
+    margin-bottom: 8px;
+    transition: background 0.15s;
+}
+.action-row:hover { background: #fef2f2; }
+.action-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-top: 5px;
+    flex-shrink: 0;
+}
+.action-dot.high   { background: #ef4444; }
+.action-dot.medium { background: #f59e0b; }
+.action-dot.low    { background: #10b981; }
+.action-text { font-size: 0.82rem; color: #374151; flex: 1; line-height: 1.5; }
+.action-priority {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 2px 8px;
+    border-radius: 999px;
+    flex-shrink: 0;
+}
+.action-priority.high   { background: #fef2f2; color: #dc2626; }
+.action-priority.medium { background: #fffbeb; color: #d97706; }
+
+/* ── Overview table ── */
+.overview-row {
+    display: grid;
+    grid-template-columns: 1fr 110px 100px 80px 110px;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    align-items: center;
+}
+.overview-row.header {
+    background: #f8fafc;
+    font-weight: 600;
+    color: #64748b;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid #e2e8f0;
+}
+.overview-row:not(.header) { border-bottom: 1px solid #f1f5f9; }
+.overview-row:not(.header):hover { background: #f8fafc; }
+
+/* ── Export buttons ── */
+.stDownloadButton > button {
+    background: white !important;
+    border: 1.5px solid #e2e8f0 !important;
+    border-radius: 8px !important;
+    color: #374151 !important;
+    font-size: 0.82rem !important;
+    font-weight: 500 !important;
+    padding: 8px 16px !important;
+    width: 100% !important;
+    transition: all 0.15s !important;
+}
+.stDownloadButton > button:hover {
+    border-color: #3b82f6 !important;
+    color: #3b82f6 !important;
+    background: #eff6ff !important;
+}
+
+/* ── Streamlit metric overrides ── */
+[data-testid="metric-container"] {
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 16px 20px !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+/* ── Dark mode toggle button ── */
+.mode-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 0.78rem;
+    color: #cbd5e1;
+    cursor: pointer;
+    margin-top: 8px;
+    width: 100%;
+    justify-content: center;
+    transition: background 0.15s;
+}
+.mode-btn:hover { background: rgba(255,255,255,0.18); }
+
+/* ── Divider ── */
+.divider {
+    border: none;
+    border-top: 1px solid #e2e8f0;
+    margin: 20px 0;
+}
+/* Hide Streamlit's own hr */
+hr { display: none; }
+
+/* ── Expander styling ── */
+[data-testid="stExpander"] {
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 10px !important;
+    overflow: hidden !important;
+    background: white !important;
+    margin-bottom: 8px !important;
+}
+[data-testid="stExpander"] summary {
+    background: #f8fafc !important;
+    padding: 10px 14px !important;
+    font-size: 0.85rem !important;
+    font-weight: 500 !important;
+    color: #374151 !important;
+}
+
+/* ── Plotly charts ── */
+.js-plotly-plot { border-radius: 8px; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f1f5f9; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+</style>
+"""
+
+DARK_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+html, body, [class*="css"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+}
+.stApp { background: #0f172a !important; }
+#MainMenu, footer, header { visibility: hidden; }
+.block-container {
+    padding-top: 1.5rem !important;
+    padding-bottom: 2rem !important;
+    max-width: 1400px !important;
+}
+[data-testid="stSidebar"] {
+    background: #0f172a !important;
+    border-right: 1px solid #1e293b !important;
+}
+[data-testid="stSidebar"] * { color: #94a3b8 !important; }
+[data-testid="stSidebar"] [data-baseweb="select"] > div {
+    background: #1e293b !important;
+    border: 1px solid #334155 !important;
+    border-radius: 8px !important;
+    color: #e2e8f0 !important;
+}
+[data-testid="stSidebar"] input {
+    background: #1e293b !important;
+    border: 1px solid #334155 !important;
+    border-radius: 8px !important;
+    color: #e2e8f0 !important;
+}
+[data-testid="stSidebar"] hr { border-color: #1e293b !important; }
+.page-header {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    border-radius: 16px;
+    padding: 28px 32px;
+    margin-bottom: 24px;
+    color: white;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+    border: 1px solid #1e293b;
+}
+.kpi-card, .section-card {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2) !important;
+}
+.kpi-card:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3) !important;
+}
+.kpi-value, .section-title { color: #f1f5f9 !important; }
+.kpi-label { color: #64748b !important; }
+.kpi-icon.blue   { background: #1e3a5f; }
+.kpi-icon.green  { background: #064e3b; }
+.kpi-icon.amber  { background: #451a03; }
+.kpi-icon.red    { background: #450a0a; }
+.kpi-icon.purple { background: #2e1065; }
+.prog-bar-wrap { background: #334155; }
+.badge-completed    { background: #064e3b; color: #34d399; }
+.badge-in_progress  { background: #451a03; color: #fbbf24; }
+.badge-under_review { background: #1e3a5f; color: #60a5fa; }
+.badge-blocked      { background: #450a0a; color: #f87171; }
+.badge-pending      { background: #1e293b; color: #94a3b8; border-color: #334155; }
+.badge-low    { background: #064e3b; color: #34d399; }
+.badge-medium { background: #451a03; color: #fbbf24; }
+.badge-high   { background: #450a0a; color: #f87171; }
+.action-row { border-color: #450a0a; background: #1e0b0b; }
+.action-row:hover { background: #270f0f; }
+.action-text { color: #e2e8f0; }
+.action-priority.high   { background: #450a0a; color: #f87171; }
+.action-priority.medium { background: #451a03; color: #fbbf24; }
+.overview-row.header { background: #1e293b; color: #64748b; }
+.overview-row:not(.header):hover { background: #1e293b; }
+.overview-row:not(.header) { border-color: #1e293b; }
+.stDownloadButton > button {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+    color: #e2e8f0 !important;
+    border-radius: 8px !important;
+}
+.stDownloadButton > button:hover {
+    border-color: #3b82f6 !important;
+    color: #60a5fa !important;
+    background: #1e3a5f !important;
+}
+[data-testid="metric-container"] {
+    background: #1e293b;
+    border-color: #334155;
+    border-radius: 12px;
+    padding: 16px 20px !important;
+}
+[data-testid="stExpander"] {
+    border-color: #334155 !important;
+    background: #1e293b !important;
+}
+[data-testid="stExpander"] summary {
+    background: #0f172a !important;
+    color: #e2e8f0 !important;
+}
+.divider { border-color: #1e293b; }
+::-webkit-scrollbar-track { background: #0f172a; }
+::-webkit-scrollbar-thumb { background: #334155; }
+::-webkit-scrollbar-thumb:hover { background: #475569; }
+</style>
+"""
+
+# ── Plotly theme ──────────────────────────────────────────────────────────────
+
+def plotly_layout(dark: bool = False) -> dict:
+    bg     = "#1e293b" if dark else "white"
+    paper  = "#1e293b" if dark else "white"
+    text   = "#94a3b8" if dark else "#64748b"
+    grid   = "#334155" if dark else "#f1f5f9"
+    return dict(
+        paper_bgcolor=paper,
+        plot_bgcolor=bg,
+        font=dict(family="Inter, sans-serif", color=text, size=11),
+        xaxis=dict(gridcolor=grid, linecolor=grid, showgrid=True, zeroline=False),
+        yaxis=dict(gridcolor=grid, linecolor=grid, showgrid=True, zeroline=False),
+        margin=dict(t=16, b=36, l=36, r=16),
+        legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=11)),
+        hoverlabel=dict(
+            bgcolor="#1e3a5c" if not dark else "#0f172a",
+            font_color="white",
+            bordercolor="#3b82f6",
+        ),
+    )
+
+
+# ── Data loading helpers ──────────────────────────────────────────────────────
+
+def load_project_names(projects_root: Path = PROJECTS_ROOT) -> List[str]:
+    names: List[str] = []
+    if projects_root.exists():
+        for d in sorted(projects_root.iterdir()):
+            if d.is_dir() and list(d.glob("review/*.json")):
+                names.append(d.name)
+    for demo in ("fenogal", "gastrilex"):
+        if demo not in names:
+            names.append(f"{demo} (demo)")
+    return names
+
+
+def load_project_report(project_name: str, projects_root: Path = PROJECTS_ROOT) -> Optional[Dict]:
+    clean = project_name.replace(" (demo)", "")
+    review_dir = projects_root / clean / "review"
+    files = list(review_dir.glob("*.json")) if review_dir.exists() else []
+    if files:
+        latest = max(files, key=lambda p: p.stat().st_mtime)
+        with open(latest, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return _demo_report(clean)
+
+
+def _demo_report(project: str) -> Dict:
+    if project == "gastrilex":
+        items = [
+            {"item": "食品業者登錄證明",        "category": "business_reg",   "status": "completed",    "notes": "已完成登錄",     "risk_level": "low"},
+            {"item": "產品配方及製造流程說明書",  "category": "formulation",    "status": "in_progress",  "notes": "配方修訂中",     "risk_level": "medium"},
+            {"item": "原料規格及來源證明",        "category": "raw_materials",  "status": "pending",      "notes": "等待供應商文件", "risk_level": "high"},
+            {"item": "成品檢驗規格及方法",        "category": "testing_specs",  "status": "under_review", "notes": "實驗室審查中",   "risk_level": "medium"},
+            {"item": "衛生安全性試驗報告",        "category": "safety_testing", "status": "pending",      "notes": "尚未開始",       "risk_level": "high"},
+        ]
+        completion = 20.0
+        status = "needs_attention"
+    else:
+        items = [
+            {"item": "換發新證申請書",            "category": "license_renewal", "status": "in_progress",  "notes": "預計 2026-03-23 完成", "risk_level": "high"},
+            {"item": "成品製造廠 GMP 核備函",      "category": "gmp",             "status": "completed",    "notes": "GMP 展延已完成",       "risk_level": "low"},
+            {"item": "藥典/廠規檢驗規格變更備查",  "category": "specification",   "status": "under_review", "notes": "TFDA 審查中",          "risk_level": "medium"},
+            {"item": "原料藥製造廠 GMP 證明文件",  "category": "api_gmp",         "status": "completed",    "notes": "附 QR code GMP 證書",  "risk_level": "low"},
+            {"item": "非登不可上傳原料藥 GMP 文件","category": "api_upload",      "status": "blocked",      "notes": "QR code 驗證失敗",     "risk_level": "high"},
+            {"item": "成品元素不純物風險評估報告",  "category": "risk_assessment", "status": "completed",    "notes": "風險評估已核准",       "risk_level": "low"},
+            {"item": "ExPress 平臺上傳補正內容",   "category": "submission",      "status": "pending",      "notes": "等待所有文件就緒",     "risk_level": "medium"},
+        ]
+        completion = 42.9
+        status = "needs_attention"
+
+    high_risk = [i for i in items if i["risk_level"] == "high"]
+    return {
+        "review_date": datetime.now().isoformat(),
+        "project": project,
+        "document_type": "food_registration" if project == "gastrilex" else "drug_registration_extension",
+        "overall_status": status,
+        "completion_rate": f"{completion:.1f}%",
+        "items": items,
+        "risks": high_risk,
+        "action_items": [
+            {"item": i["item"], "priority": "high", "action": "立即處理"}
+            for i in high_risk
+        ],
+        "summary": {
+            "completed": sum(1 for i in items if i["status"] == "completed"),
+            "total": len(items),
+            "high_risk_items": len(high_risk),
+        },
+    }
+
+
+def _parse_completion(s) -> float:
+    try:
+        return float(str(s).replace("%", ""))
+    except Exception:
+        return 0.0
+
+
+# ── HTML helpers ──────────────────────────────────────────────────────────────
+
+def kpi_card(icon: str, value: str, label: str, color: str, delta: str = "", delta_ok: bool = True) -> str:
+    delta_html = ""
+    if delta:
+        cls = "ok" if delta_ok else "warn"
+        arrow = "↑" if delta_ok else "↓"
+        delta_html = f'<div class="kpi-delta {cls}">{arrow} {delta}</div>'
+    return f"""
+    <div class="kpi-card {color}">
+        <div class="kpi-icon {color}">{icon}</div>
+        <div class="kpi-value">{value}</div>
+        <div class="kpi-label">{label}</div>
+        {delta_html}
+    </div>
+    """
+
+
+def badge(text: str, cls: str) -> str:
+    icon = STATUS_ICONS.get(text, "")
+    return f'<span class="badge badge-{cls}">{icon} {text.replace("_", " ").title()}</span>'
+
+
+def risk_badge(text: str) -> str:
+    icons = {"low": "▼", "medium": "◆", "high": "▲"}
+    return f'<span class="badge badge-{text}">{icons.get(text, "")} {text.upper()}</span>'
+
+
+def prog_bar(pct: float, label: str = "", warn_threshold: float = 30.0) -> str:
+    cls = "warn" if pct < warn_threshold else "ok" if pct > 70 else ""
+    return f"""
+    <div>
+        <div class="prog-label"><span>{label}</span><span>{pct:.1f}%</span></div>
+        <div class="prog-bar-wrap">
+            <div class="prog-bar-fill {cls}" style="width:{pct}%"></div>
+        </div>
+    </div>
+    """
+
+
+# ── Chart builders ─────────────────────────────────────────────────────────────
+
+def build_progress_chart(report: Dict, dark: bool = False) -> go.Figure:
+    summary   = report.get("summary", {})
+    completed = summary.get("completed", 0)
+    total     = summary.get("total", 1)
+    remaining = total - completed
+    comp_pct  = _parse_completion(report.get("completion_rate", "0%"))
+
+    colors = (
+        ["#3b82f6", "#334155"] if dark else ["#3b82f6", "#e2e8f0"]
+    )
+    fig = go.Figure(go.Pie(
+        values=[completed, remaining],
+        labels=["已完成", "未完成"],
+        hole=0.68,
+        marker=dict(colors=colors, line=dict(width=0)),
+        textinfo="none",
+        hovertemplate="%{label}: %{value}<extra></extra>",
+    ))
+    ann_color = "#f1f5f9" if dark else "#1e293b"
+    fig.update_layout(
+        **plotly_layout(dark),
+        annotations=[
+            dict(text=f"<b>{comp_pct:.0f}%</b>", x=0.5, y=0.55,
+                 font=dict(size=26, color=ann_color), showarrow=False),
+            dict(text="完成度", x=0.5, y=0.40,
+                 font=dict(size=11, color="#64748b"), showarrow=False),
+        ],
+        showlegend=True,
+        height=240,
+        legend=dict(orientation="h", y=-0.08, x=0.5, xanchor="center"),
+    )
+    return fig
+
+
+def build_status_bar(items: List[Dict], dark: bool = False) -> go.Figure:
+    status_counts: Dict[str, int] = {}
+    for item in items:
+        s = item.get("status", "pending")
+        status_counts[s] = status_counts.get(s, 0) + 1
+
+    labels = list(status_counts.keys())
+    values = [status_counts[l] for l in labels]
+    display = [l.replace("_", " ").title() for l in labels]
+    colors  = [STATUS_COLORS.get(l, "#94a3b8") for l in labels]
+
+    fig = go.Figure(go.Bar(
+        x=display, y=values,
+        marker=dict(color=colors, line=dict(width=0)),
+        text=values, textposition="outside",
+        hovertemplate="%{x}: %{y}<extra></extra>",
+    ))
+    fig.update_layout(
+        **plotly_layout(dark),
+        height=240,
+        bargap=0.35,
+        yaxis=dict(showgrid=True, zeroline=False, tick0=0, dtick=1),
+    )
+    return fig
+
+
+def build_risk_chart(items: List[Dict], dark: bool = False) -> go.Figure:
+    risk_counts = {"low": 0, "medium": 0, "high": 0}
+    for i in items:
+        r = i.get("risk_level", "medium")
+        if r in risk_counts:
+            risk_counts[r] += 1
+
+    labels = ["Low", "Medium", "High"]
+    values = [risk_counts["low"], risk_counts["medium"], risk_counts["high"]]
+    colors = ["#10b981", "#f59e0b", "#ef4444"]
+
+    fig = go.Figure(go.Bar(
+        x=labels, y=values,
+        marker=dict(color=colors, line=dict(width=0)),
+        text=values, textposition="outside",
+        hovertemplate="%{x} risk: %{y} items<extra></extra>",
+    ))
+    fig.update_layout(
+        **plotly_layout(dark),
+        height=240,
+        bargap=0.4,
+        yaxis=dict(showgrid=True, zeroline=False, tick0=0, dtick=1),
+    )
+    return fig
+
+
+def build_timeline_chart(projects: List[Dict], dark: bool = False) -> go.Figure:
+    today = date.today()
+    names, days_list, colors = [], [], []
+    for p in projects:
+        dl = DEADLINES.get(p["name"].lower())
+        if dl:
+            days = (dl - today).days
+            names.append(p["name"].upper())
+            days_list.append(max(days, 0))
+            colors.append(
+                "#ef4444" if days < 30 else "#f59e0b" if days < 90 else "#10b981"
+            )
+
+    if not names:
+        return go.Figure()
+
+    fig = go.Figure(go.Bar(
+        x=names, y=days_list,
+        marker=dict(color=colors, line=dict(width=0)),
+        text=[f"{d}d" for d in days_list],
+        textposition="outside",
+        hovertemplate="%{x}: %{y} days remaining<extra></extra>",
+    ))
+    fig.update_layout(
+        **plotly_layout(dark),
+        yaxis_title="Days Until Deadline",
+        height=240,
+        bargap=0.4,
+    )
+    return fig
+
+
+def build_radar_chart(all_projects: List[Dict], dark: bool = False) -> go.Figure:
+    fig = go.Figure()
+    cat_color = "#94a3b8" if dark else "#64748b"
+    for p in all_projects:
+        comp = p.get("completion", 0)
+        risk = max(0, 100 - p.get("high_risk", 0) * 25)
+        days = p.get("days_remaining") or 0
+        urgency = min(100, max(0, days / 2))
+        fig.add_trace(go.Scatterpolar(
+            r=[comp, risk, urgency],
+            theta=["Completion", "Safety", "Time Buffer"],
+            fill="toself",
+            name=p["name"].upper(),
+            line=dict(width=2),
+            opacity=0.7,
+        ))
+    fig.update_layout(
+        **plotly_layout(dark),
+        polar=dict(
+            bgcolor="#1e293b" if dark else "#f8fafc",
+            radialaxis=dict(
+                visible=True, range=[0, 100],
+                gridcolor="#334155" if dark else "#e2e8f0",
+                color=cat_color,
+            ),
+            angularaxis=dict(
+                gridcolor="#334155" if dark else "#e2e8f0",
+                color=cat_color,
+            ),
+        ),
+        showlegend=True,
+        height=280,
+    )
+    return fig
+
+
+# ── Export helpers ─────────────────────────────────────────────────────────────
+
+def export_markdown(report: Dict) -> str:
+    lines = [
+        f"# Regulatory Review Report — {report.get('project', 'Unknown').upper()}",
+        f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M')}  ",
+        f"**Status:** {report.get('overall_status', '').replace('_', ' ').title()}  ",
+        f"**Completion:** {report.get('completion_rate', '0%')}",
+        "",
+        "## Checklist Items",
+        "",
+        "| Item | Status | Risk |",
+        "|------|--------|------|",
+    ]
+    for item in report.get("items", []):
+        lines.append(f"| {item['item']} | {item['status']} | {item['risk_level']} |")
+
+    lines += ["", "## Action Items", ""]
+    for action in report.get("action_items", []):
+        lines.append(f"- **[{action['priority'].upper()}]** {action['item']}: {action.get('action', '')}")
+
+    return "\n".join(lines)
+
+
+# ── Main Streamlit app ────────────────────────────────────────────────────────
+
+def main():
+    st.set_page_config(
+        page_title="Regulatory Review",
+        page_icon="⚕",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+    # ── Session state defaults ─────────────────────────────────────────────
+    if "dark_mode" not in st.session_state:
+        st.session_state.dark_mode = False
+    if "view" not in st.session_state:
+        st.session_state.view = "overview"
+
+    dark = st.session_state.dark_mode
+
+    # ── Inject CSS ────────────────────────────────────────────────────────
+    st.markdown(DARK_CSS if dark else LIGHT_CSS, unsafe_allow_html=True)
+
+    # ── Sidebar ───────────────────────────────────────────────────────────
+    with st.sidebar:
+        st.markdown("""
+        <div class="sidebar-logo">
+            <div class="sidebar-logo-icon">⚕</div>
+            <div>
+                <div class="sidebar-logo-text">RegReview</div>
+                <div class="sidebar-logo-sub">Regulatory Dashboard</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("""
+        <div style="font-size:0.68rem;font-weight:600;text-transform:uppercase;
+                    letter-spacing:0.08em;color:#64748b;margin-bottom:8px">Navigation</div>
+        """, unsafe_allow_html=True)
+
+        nav_items = [
+            ("overview",    "📋", "Project Overview"),
+            ("timeline",    "📅", "Timeline & Deadlines"),
+            ("comparison",  "📊", "Multi-Project View"),
+        ]
+        for key, icon, label in nav_items:
+            active = "active" if st.session_state.view == key else ""
+            if st.button(f"{icon}  {label}", key=f"nav_{key}",
+                         use_container_width=True):
+                st.session_state.view = key
+                st.rerun()
+
+        st.markdown('<hr class="divider">', unsafe_allow_html=True)
+
+        st.markdown("""
+        <div style="font-size:0.68rem;font-weight:600;text-transform:uppercase;
+                    letter-spacing:0.08em;color:#64748b;margin-bottom:8px">Project</div>
+        """, unsafe_allow_html=True)
+
+        project_names = load_project_names()
+        selected = st.selectbox("", project_names, label_visibility="collapsed")
+
+        projects_root_input = st.text_input(
+            "Data directory",
+            value=str(PROJECTS_ROOT),
+            help="Directory containing project folders",
+        )
+        projects_root = Path(projects_root_input).expanduser()
+
+        st.markdown('<hr class="divider">', unsafe_allow_html=True)
+
+        st.markdown("""
+        <div style="font-size:0.68rem;font-weight:600;text-transform:uppercase;
+                    letter-spacing:0.08em;color:#64748b;margin-bottom:8px">Settings</div>
+        """, unsafe_allow_html=True)
+
+        mode_label = "☀️  淺色模式" if dark else "🌙  深色模式"
+        if st.button(mode_label, use_container_width=True):
+            st.session_state.dark_mode = not dark
+            st.rerun()
+
+        auto_refresh = st.checkbox("自動重新整理 (30 秒)", value=False)
+        if auto_refresh:
+            import time
+            st.caption(f"最後更新: {datetime.now().strftime('%H:%M:%S')}")
+            time.sleep(0.1)
+            st.rerun()
+
+        st.markdown(
+            f'<div style="font-size:0.68rem;color:#475569;margin-top:16px;'
+            f'text-align:center">'
+            f'v2.0 · {datetime.now().strftime("%Y-%m-%d")}</div>',
+            unsafe_allow_html=True
+        )
+
+    # ── Load data ─────────────────────────────────────────────────────────
+    report = load_project_report(selected, projects_root)
+    if not report:
+        st.error(f"No review data found for **{selected}**.")
+        return
+
+    items:          List[Dict] = report.get("items", [])
+    summary                    = report.get("summary", {})
+    project_name               = report.get("project", selected)
+    comp_pct                   = _parse_completion(report.get("completion_rate", "0%"))
+    overall_status             = report.get("overall_status", "unknown")
+    high_risk_count            = summary.get("high_risk_items", 0)
+    deadline                   = DEADLINES.get(project_name.lower())
+    days_left                  = (deadline - date.today()).days if deadline else None
+
+    # ── VIEW: OVERVIEW ─────────────────────────────────────────────────────
+    if st.session_state.view == "overview":
+
+        # Header
+        urgency_badge = ""
+        if days_left is not None:
+            if days_left < 30:
+                urgency_badge = '<span style="background:#fef2f2;color:#dc2626;padding:3px 10px;border-radius:999px;font-size:0.72rem;font-weight:600;margin-left:10px">🔴 緊急</span>'
+            elif days_left < 90:
+                urgency_badge = '<span style="background:#fffbeb;color:#d97706;padding:3px 10px;border-radius:999px;font-size:0.72rem;font-weight:600;margin-left:10px">🟡 需關注</span>'
+            else:
+                urgency_badge = '<span style="background:#ecfdf5;color:#059669;padding:3px 10px;border-radius:999px;font-size:0.72rem;font-weight:600;margin-left:10px">🟢 進度正常</span>'
+
+        doc_type  = report.get("document_type", "").replace("_", " ").title()
+        rev_date  = report.get("review_date", "")[:10]
+        dl_str    = deadline.strftime("%Y-%m-%d") if deadline else "N/A"
+
+        st.markdown(f"""
+        <div class="page-header">
+            <div class="page-header-badge">⚕ 法規審查系統</div>
+            <h1>{project_name.upper()}{urgency_badge}</h1>
+            <p class="page-header-sub">
+                {doc_type} &nbsp;·&nbsp; 上次審查: {rev_date}
+                &nbsp;·&nbsp; 截止日期: {dl_str}
+                {f'&nbsp;·&nbsp; <b>剩餘 {days_left} 天</b>' if days_left is not None else ''}
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # KPI Cards
+        deadline_pct = 0.0
+        if days_left is not None:
+            window = 180
+            deadline_pct = max(0.0, min(100.0, (window - days_left) / window * 100))
+
+        kpi_html = f"""
+        <div class="kpi-grid">
+            {kpi_card("📈", f"{comp_pct:.1f}%", "完成度", "blue",
+                      delta=f"{summary.get('completed',0)} / {summary.get('total', len(items))} 項",
+                      delta_ok=True)}
+            {kpi_card("✅", str(summary.get("completed", 0)), "已完成項目", "green")}
+            {kpi_card("⚠️", str(high_risk_count), "高風險項目",
+                      "red" if high_risk_count > 0 else "green",
+                      delta="需立即處理" if high_risk_count else "一切正常",
+                      delta_ok=high_risk_count == 0)}
+            {kpi_card("📅", f"{days_left}天" if days_left is not None else "N/A", "剩餘天數",
+                      "red" if (days_left or 99) < 30 else "amber" if (days_left or 99) < 90 else "green")}
+            {kpi_card("📋", str(summary.get("total", len(items))), "總項目數", "purple")}
+        </div>
+        """
+        st.markdown(kpi_html, unsafe_allow_html=True)
+
+        # Progress bars
+        st.markdown(f"""
+        <div class="section-card">
+            <div class="section-title">
+                <div class="title-icon">📊</div> Progress Overview
+            </div>
+            {prog_bar(comp_pct, "Document Completion")}
+            <div style="margin-top: 14px">
+            {prog_bar(deadline_pct, "Timeline Elapsed", warn_threshold=75.0)}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Charts row
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">🔵</div> Completion</div>', unsafe_allow_html=True)
+            st.plotly_chart(build_progress_chart(report, dark), use_container_width=True, key="prog_chart")
+            st.markdown('</div>', unsafe_allow_html=True)
+        with c2:
+            st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">📊</div> Status Breakdown</div>', unsafe_allow_html=True)
+            st.plotly_chart(build_status_bar(items, dark), use_container_width=True, key="status_chart")
+            st.markdown('</div>', unsafe_allow_html=True)
+        with c3:
+            st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">⚠️</div> Risk Distribution</div>', unsafe_allow_html=True)
+            st.plotly_chart(build_risk_chart(items, dark), use_container_width=True, key="risk_chart")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # Checklist table
+        st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">📋</div> Checklist Items</div>', unsafe_allow_html=True)
+
+        # Filter controls
+        f1, f2, f3 = st.columns([1, 1, 2])
+        with f1:
+            all_statuses = list({i.get("status", "pending") for i in items})
+            sel_status = st.multiselect("Filter by Status", all_statuses, default=all_statuses, label_visibility="collapsed", placeholder="All statuses")
+        with f2:
+            sel_risk = st.multiselect("Filter by Risk", ["low", "medium", "high"], default=["low", "medium", "high"], label_visibility="collapsed", placeholder="All risk levels")
+        with f3:
+            search_q = st.text_input("", placeholder="🔍  Search items...", label_visibility="collapsed")
+
+        filtered = [
+            i for i in items
+            if (not sel_status or i.get("status") in sel_status)
+            and (not sel_risk or i.get("risk_level") in sel_risk)
+            and (not search_q or search_q.lower() in i.get("item", "").lower()
+                 or search_q.lower() in i.get("notes", "").lower())
+        ]
+
+        df = pd.DataFrame([
+            {
+                "Item":     i.get("item", ""),
+                "Category": i.get("category", "").replace("_", " ").title(),
+                "Status":   i.get("status", ""),
+                "Risk":     i.get("risk_level", ""),
+                "Notes":    i.get("notes", ""),
+            }
+            for i in filtered
+        ])
+
+        def color_status(val):
+            c = STATUS_COLORS.get(val, "#94a3b8")
+            return f"background-color: {c}20; color: {c}; font-weight: 600; border-radius: 4px"
+
+        def color_risk(val):
+            c = RISK_COLORS.get(val, "#94a3b8")
+            return f"background-color: {c}20; color: {c}; font-weight: 600; border-radius: 4px"
+
+        styled = (
+            df.style
+            .map(color_status, subset=["Status"])
+            .map(color_risk, subset=["Risk"])
+            .set_properties(**{"font-size": "13px"})
+        )
+        st.dataframe(
+            styled,
+            use_container_width=True,
+            height=min(520, (len(filtered) + 1) * 38 + 6),
+        )
+        st.markdown(f'<div style="font-size:0.75rem;color:#64748b;margin-top:6px">{len(filtered)} of {len(items)} items shown</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # Add New Task Section
+        st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">➕</div> 新增審查項目</div>', unsafe_allow_html=True)
+        
+        with st.form("add_task_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                new_item_name = st.text_input("項目名稱", placeholder="輸入審查項目名稱...")
+                new_item_category = st.selectbox("類別", ["document", "gmp", "specification", "risk_assessment", "platform_upload", "other"])
+            with col2:
+                new_item_status = st.selectbox("狀態", ["pending", "in_progress", "completed", "blocked", "under_review"])
+                new_item_risk = st.selectbox("風險等級", ["low", "medium", "high"])
+            new_item_notes = st.text_area("備註", placeholder="輸入相關備註...")
+            
+            submitted = st.form_submit_button("➕ 新增項目", use_container_width=True)
+            
+            if submitted and new_item_name:
+                # Load existing report
+                report_path = projects_root / project_name / "review" / f"{project_name}-review-latest.json"
+                if report_path.exists():
+                    with open(report_path, 'r', encoding='utf-8') as f:
+                        existing_report = json.load(f)
+                    
+                    # Add new item
+                    new_item = {
+                        "item": new_item_name,
+                        "category": new_item_category,
+                        "status": new_item_status,
+                        "risk_level": new_item_risk,
+                        "notes": new_item_notes,
+                        "last_updated": datetime.now().isoformat()
+                    }
+                    
+                    if "items" not in existing_report:
+                        existing_report["items"] = []
+                    existing_report["items"].append(new_item)
+                    
+                    # Update summary
+                    total_items = len(existing_report["items"])
+                    completed_items = sum(1 for i in existing_report["items"] if i.get("status") == "completed")
+                    high_risk_items = sum(1 for i in existing_report["items"] if i.get("risk_level") == "high")
+                    
+                    existing_report["summary"]["total"] = total_items
+                    existing_report["summary"]["completed"] = completed_items
+                    existing_report["summary"]["high_risk_items"] = high_risk_items
+                    existing_report["completion_rate"] = f"{completed_items / total_items * 100:.1f}%"
+                    existing_report["review_date"] = datetime.now().isoformat()
+                    
+                    # Save updated report
+                    with open(report_path, 'w', encoding='utf-8') as f:
+                        json.dump(existing_report, f, ensure_ascii=False, indent=2)
+                    
+                    st.success(f"✅ 已新增項目: {new_item_name}")
+                    st.rerun()
+                else:
+                    st.error("❌ 找不到專案報告檔案")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # Action items
+        action_items = report.get("action_items", [])
+        if action_items:
+            st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">⚡</div> Action Items</div>', unsafe_allow_html=True)
+            for action in action_items:
+                priority = action.get("priority", "medium")
+                st.markdown(f"""
+                <div class="action-row">
+                    <div class="action-dot {priority}"></div>
+                    <div class="action-text">
+                        <strong>{action['item']}</strong><br>
+                        <span style="opacity:0.75">{action.get('action', '')}</span>
+                    </div>
+                    <span class="action-priority {priority}">{priority.upper()}</span>
+                </div>
+                """, unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # Export
+        st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">📤</div> Export Report</div>', unsafe_allow_html=True)
+        e1, e2, e3 = st.columns(3)
+        with e1:
+            st.download_button(
+                "⬇  Markdown (.md)",
+                data=export_markdown(report).encode("utf-8"),
+                file_name=f"{project_name}-review-{date.today()}.md",
+                mime="text/markdown",
+                use_container_width=True,
+            )
+        with e2:
+            st.download_button(
+                "⬇  JSON (.json)",
+                data=json.dumps(report, ensure_ascii=False, indent=2, default=str).encode("utf-8"),
+                file_name=f"{project_name}-review-{date.today()}.json",
+                mime="application/json",
+                use_container_width=True,
+            )
+        with e3:
+            if WORD_AVAILABLE:
+                try:
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+                        gen = WordGenerator()
+                        gen.generate(report, tmp.name)
+                        with open(tmp.name, "rb") as f:
+                            word_bytes = f.read()
+                    st.download_button(
+                        "⬇  Word (.docx)",
+                        data=word_bytes,
+                        file_name=f"{project_name}-review-{date.today()}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True,
+                    )
+                except Exception as ex:
+                    st.button("⬇  Word (.docx)", disabled=True, help=str(ex), use_container_width=True)
+            else:
+                st.button("⬇  Word (.docx)", disabled=True,
+                          help="Install python-docx to enable Word export",
+                          use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # Check for updates
+        st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">🔄</div> 程式更新</div>', unsafe_allow_html=True)
+        
+        if st.button("🔍 檢查更新", use_container_width=True):
+            with st.spinner("檢查中..."):
+                update_info = check_for_updates()
+                
+            if update_info.get('available'):
+                st.success(f"✅ 發現新版本: v{update_info['latest']}")
+                st.info(f"📋 更新說明: {update_info.get('notes', '無')[:200]}...")
+                st.markdown(f"[⬇️ 下載最新版本]({update_info['url']})", unsafe_allow_html=True)
+            else:
+                st.info(f"✓ 目前版本 v{update_info['current']} 已是最新")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # OpenClaw Sync
+        st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">☁️</div> OpenClaw 同步</div>', unsafe_allow_html=True)
+        
+        if st.button("🔄 同步到 OpenClaw", use_container_width=True):
+            with st.spinner("同步中..."):
+                sync_result = sync_to_openclaw(project_name, report)
+            
+            if sync_result.get('success'):
+                st.success(f"✅ 同步成功！")
+                st.info(f"📁 同步檔案: {sync_result.get('file', 'N/A')}")
+                st.info(f"📡 同步方式: {sync_result.get('method', 'N/A')}")
+                
+                # Show OpenClaw link
+                st.markdown(f"[🌐 在 OpenClaw 中查看]({OPENCLAW_GATEWAY_URL})", unsafe_allow_html=True)
+            else:
+                st.error(f"❌ 同步失敗: {sync_result.get('error', '未知錯誤')}")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── VIEW: TIMELINE ─────────────────────────────────────────────────────
+    elif st.session_state.view == "timeline":
+        st.markdown("""
+        <div class="page-header">
+            <div class="page-header-badge">📅 Timeline</div>
+            <h1>Deadlines & Milestones</h1>
+            <p class="page-header-sub">Deadline countdown for all tracked projects</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        all_projects = []
+        for name in project_names:
+            r = load_project_report(name, projects_root)
+            if r:
+                dl = DEADLINES.get(r.get("project", name).lower())
+                days = (dl - date.today()).days if dl else None
+                all_projects.append({
+                    "name":           r.get("project", name),
+                    "completion":     _parse_completion(r.get("completion_rate", "0%")),
+                    "status":         r.get("overall_status", "unknown"),
+                    "high_risk":      r.get("summary", {}).get("high_risk_items", 0),
+                    "days_remaining": days,
+                    "deadline":       str(dl) if dl else "N/A",
+                })
+
+        if all_projects:
+            # Deadline cards
+            cols = st.columns(len(all_projects))
+            for col, p in zip(cols, all_projects):
+                with col:
+                    days = p.get("days_remaining")
+                    color = "red" if (days or 99) < 30 else "amber" if (days or 99) < 90 else "green"
+                    st.markdown(f"""
+                    <div class="kpi-card {color}">
+                        <div class="kpi-icon {color}">📅</div>
+                        <div class="kpi-value">{days if days is not None else 'N/A'}<span style="font-size:1rem;font-weight:400"> d</span></div>
+                        <div class="kpi-label">{p['name'].upper()}</div>
+                        <div class="kpi-delta {'warn' if (days or 99) < 30 else 'ok'}">Deadline: {p['deadline']}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+            st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">📊</div> Days Until Deadline</div>', unsafe_allow_html=True)
+            st.plotly_chart(build_timeline_chart(all_projects, dark), use_container_width=True, key="timeline_chart")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            # Gantt-style progress per project
+            st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">📈</div> Completion vs Deadline Urgency</div>', unsafe_allow_html=True)
+            for p in all_projects:
+                days = p.get("days_remaining") or 0
+                comp = p.get("completion", 0)
+                window = 180
+                elapsed = max(0.0, min(100.0, (window - days) / window * 100))
+                st.markdown(f"""
+                <div style="margin-bottom:16px">
+                    <div style="font-size:0.85rem;font-weight:600;color:{'#f1f5f9' if dark else '#1e293b'};
+                                margin-bottom:6px">{p['name'].upper()}</div>
+                    {prog_bar(comp, "Completion")}
+                    <div style="margin-top:8px">{prog_bar(elapsed, "Timeline Elapsed", warn_threshold=75.0)}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── VIEW: COMPARISON ──────────────────────────────────────────────────
+    elif st.session_state.view == "comparison":
+        st.markdown("""
+        <div class="page-header">
+            <div class="page-header-badge">📊 Comparison</div>
+            <h1>Multi-Project Overview</h1>
+            <p class="page-header-sub">Side-by-side comparison of all regulatory projects</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        all_projects = []
+        for name in project_names:
+            r = load_project_report(name, projects_root)
+            if r:
+                dl = DEADLINES.get(r.get("project", name).lower())
+                days = (dl - date.today()).days if dl else None
+                all_projects.append({
+                    "name":           r.get("project", name),
+                    "completion":     _parse_completion(r.get("completion_rate", "0%")),
+                    "status":         r.get("overall_status", "unknown"),
+                    "high_risk":      r.get("summary", {}).get("high_risk_items", 0),
+                    "days_remaining": days,
+                    "deadline":       str(dl) if dl else "N/A",
+                    "total_items":    r.get("summary", {}).get("total", 0),
+                    "completed_items": r.get("summary", {}).get("completed", 0),
+                })
+
+        if all_projects:
+            # Summary table header
+            hdr_color = "#f8fafc" if not dark else "#0f172a"
+            row_color = "white"   if not dark else "#1e293b"
+            txt_sec   = "#64748b"
+            txt_pri   = "#1e293b" if not dark else "#f1f5f9"
+
+            st.markdown(f"""
+            <div class="section-card">
+                <div class="section-title"><div class="title-icon">📋</div> Projects Summary</div>
+                <div class="overview-row header">
+                    <span>Project</span>
+                    <span>Completion</span>
+                    <span>Status</span>
+                    <span>High Risk</span>
+                    <span>Deadline</span>
+                </div>
+            """, unsafe_allow_html=True)
+
+            for p in all_projects:
+                comp = p["completion"]
+                bar = f'<div class="prog-bar-wrap" style="margin-top:4px"><div class="prog-bar-fill {"ok" if comp>70 else "warn" if comp<30 else ""}" style="width:{comp}%"></div></div>'
+                risk_cls = "badge-high" if p["high_risk"] > 0 else "badge-low"
+                days = p["days_remaining"]
+                dl_color = "#dc2626" if (days or 99) < 30 else "#d97706" if (days or 99) < 90 else "#059669"
+                st.markdown(f"""
+                <div class="overview-row">
+                    <span style="font-weight:600;color:{txt_pri}">{p['name'].upper()}</span>
+                    <span style="font-size:0.78rem">
+                        <span style="font-weight:600;color:{txt_pri}">{comp:.0f}%</span>{bar}
+                    </span>
+                    <span><span class="badge badge-pending">{p['status'].replace('_',' ').title()}</span></span>
+                    <span><span class="badge {risk_cls}">{p['high_risk']}</span></span>
+                    <span style="font-size:0.78rem;font-weight:500;color:{dl_color}">{p['deadline']}</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            # Radar chart
+            r1, r2 = st.columns(2)
+            with r1:
+                st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">🕸</div> Project Health Radar</div>', unsafe_allow_html=True)
+                st.plotly_chart(build_radar_chart(all_projects, dark), use_container_width=True, key="radar")
+                st.markdown('</div>', unsafe_allow_html=True)
+
+            with r2:
+                st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">📅</div> Timeline Comparison</div>', unsafe_allow_html=True)
+                st.plotly_chart(build_timeline_chart(all_projects, dark), use_container_width=True, key="comp_timeline")
+                st.markdown('</div>', unsafe_allow_html=True)
+
+            # Expandable details per project
+            st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">🔍</div> Detailed Breakdown</div>', unsafe_allow_html=True)
+            for p in all_projects:
+                with st.expander(f"{'🔴' if p['high_risk'] > 1 else '🟡' if p['high_risk'] > 0 else '🟢'}  {p['name'].upper()}  —  {p['completion']:.0f}% complete"):
+                    r = load_project_report(p['name'], projects_root)
+                    if r:
+                        sub_items = r.get("items", [])
+                        sub_df = pd.DataFrame([
+                            {"Item": i["item"], "Status": i["status"], "Risk": i["risk_level"], "Notes": i["notes"]}
+                            for i in sub_items
+                        ])
+
+                        def cs(val): c = STATUS_COLORS.get(val, "#94a3b8"); return f"background-color:{c}20;color:{c};font-weight:600"
+                        def cr(val): c = RISK_COLORS.get(val, "#94a3b8");   return f"background-color:{c}20;color:{c};font-weight:600"
+
+                        st.dataframe(
+                            sub_df.style.map(cs, subset=["Status"]).map(cr, subset=["Risk"]),
+                            use_container_width=True,
+                            height=min(400, (len(sub_items) + 1) * 38 + 6),
+                        )
+            st.markdown('</div>', unsafe_allow_html=True)
+
+
+if __name__ == "__main__":
+    main()

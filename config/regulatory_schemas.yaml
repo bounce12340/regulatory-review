@@ -1,0 +1,296 @@
+# Regulatory Review Schemas
+# Each schema defines the checklist items, risk rules, and action recommendations
+# for a given document type.
+#
+# Supported document_type values:
+#   drug_registration_extension   (藥品查驗登記展延)
+#   food_registration             (食品查驗登記)
+#   medical_device_registration   (醫療器材查驗登記)
+
+company:
+  name: "UNIVERSAL INTEGRATED CORP."
+  department: "BD & Scientific Affairs"
+  contact: "Josh Tsai, RA Manager"
+
+schemas:
+  # ─── Drug Registration Extension (7 items — fenogal) ─────────────────────
+  drug_registration_extension:
+    display_name: "Drug Registration Extension"
+    display_name_zh: "藥品查驗登記展延"
+    deadline_default_days: 90
+    items:
+      - key: item1
+        label: "換發新證申請書"
+        category: license_renewal
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Complete and submit license renewal application form"
+
+      - key: item2
+        label: "成品製造廠 GMP 核備函"
+        category: gmp
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Obtain updated GMP verification letter"
+
+      - key: item3
+        label: "藥典/廠規檢驗規格變更備查"
+        category: specification
+        required: true
+        risk_rules:
+          completed: low
+          under_review: medium
+          default: high
+        action: "Follow up with TFDA on specification change review"
+
+      - key: item4
+        label: "原料藥製造廠 GMP 證明文件"
+        category: api_gmp
+        required: true
+        risk_rules:
+          completed: low
+          default: medium
+        action: "Verify API GMP certificate authenticity"
+
+      - key: item5
+        label: "非登不可上傳原料藥 GMP 文件"
+        category: upload
+        required: true
+        risk_rules:
+          completed: low
+          blocked: high
+          default: medium
+        action: "Resolve QR code verification issue and upload documents"
+
+      - key: item6
+        label: "成品元素不純物風險評估報告"
+        category: risk_assessment
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Submit risk assessment report for approval"
+
+      - key: item7
+        label: "ExPress 平臺上傳補正內容"
+        category: submission
+        required: true
+        risk_rules:
+          completed: low
+          pending: medium
+          default: high
+        action: "Prepare all documents for ExPress platform upload"
+
+  # ─── Food Registration (10 items — gastrilex) ────────────────────────────
+  food_registration:
+    display_name: "Food Registration"
+    display_name_zh: "食品查驗登記"
+    deadline_default_days: 120
+    items:
+      - key: item1
+        label: "食品業者登錄證明"
+        category: business_registration
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Submit food business registration certificate"
+
+      - key: item2
+        label: "產品配方及製造流程說明書"
+        category: formulation
+        required: true
+        risk_rules:
+          completed: low
+          under_review: medium
+          default: high
+        action: "Prepare complete product formulation and manufacturing process"
+
+      - key: item3
+        label: "原料規格及來源證明"
+        category: raw_materials
+        required: true
+        risk_rules:
+          completed: low
+          default: medium
+        action: "Provide raw material specifications and source certificates"
+
+      - key: item4
+        label: "成品檢驗規格及方法"
+        category: testing_spec
+        required: true
+        risk_rules:
+          completed: low
+          under_review: medium
+          default: high
+        action: "Define finished product testing specifications and methods"
+
+      - key: item5
+        label: "衛生安全性試驗報告"
+        category: safety_testing
+        required: true
+        risk_rules:
+          completed: low
+          blocked: high
+          default: high
+        action: "Complete hygienic safety testing and obtain report"
+
+      - key: item6
+        label: "營養成分分析報告"
+        category: nutrition_analysis
+        required: true
+        risk_rules:
+          completed: low
+          default: medium
+        action: "Submit nutritional composition analysis report"
+
+      - key: item7
+        label: "標籤及說明書審查"
+        category: labeling
+        required: true
+        risk_rules:
+          completed: low
+          under_review: medium
+          default: medium
+        action: "Complete label and leaflet review per TFDA guidelines"
+
+      - key: item8
+        label: "製造廠 GMP 符合性聲明"
+        category: manufacturer_gmp
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Obtain GMP compliance declaration from manufacturer"
+
+      - key: item9
+        label: "進口食品衛生查驗申請"
+        category: import_inspection
+        required: false
+        risk_rules:
+          completed: low
+          blocked: high
+          default: medium
+        action: "Submit import food hygiene inspection application"
+
+      - key: item10
+        label: "查驗登記費用繳納證明"
+        category: payment
+        required: true
+        risk_rules:
+          completed: low
+          default: medium
+        action: "Provide proof of registration fee payment"
+
+  # ─── Medical Device Registration ─────────────────────────────────────────
+  medical_device_registration:
+    display_name: "Medical Device Registration"
+    display_name_zh: "醫療器材查驗登記"
+    deadline_default_days: 180
+    items:
+      - key: item1
+        label: "醫療器材許可證申請書"
+        category: device_application
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Complete and submit medical device permit application"
+
+      - key: item2
+        label: "技術文件 (Technical File)"
+        category: technical_file
+        required: true
+        risk_rules:
+          completed: low
+          under_review: medium
+          default: high
+        action: "Compile comprehensive technical documentation"
+
+      - key: item3
+        label: "臨床試驗資料或豁免聲明"
+        category: clinical_data
+        required: true
+        risk_rules:
+          completed: low
+          under_review: medium
+          blocked: high
+          default: high
+        action: "Provide clinical trial data or clinical evaluation exemption"
+
+      - key: item4
+        label: "生物相容性試驗報告"
+        category: biocompatibility
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Submit biocompatibility testing report (ISO 10993)"
+
+      - key: item5
+        label: "電氣安全及電磁相容性報告"
+        category: electrical_safety
+        required: false
+        risk_rules:
+          completed: low
+          default: medium
+        action: "Provide electrical safety and EMC test reports"
+
+      - key: item6
+        label: "製造廠 ISO 13485 / QMS 證書"
+        category: qms_certificate
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Obtain valid ISO 13485 or QMS certificate from manufacturer"
+
+      - key: item7
+        label: "符合性聲明 (Declaration of Conformity)"
+        category: conformity_declaration
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Prepare Declaration of Conformity per TFDA requirements"
+
+      - key: item8
+        label: "標籤及說明書 (中文)"
+        category: device_labeling
+        required: true
+        risk_rules:
+          completed: low
+          under_review: medium
+          default: medium
+        action: "Translate and approve Chinese labeling and IFU"
+
+      - key: item9
+        label: "原產地證明"
+        category: origin_certificate
+        required: true
+        risk_rules:
+          completed: low
+          default: medium
+        action: "Provide certificate of origin from manufacturer"
+
+      - key: item10
+        label: "授權書及代理商資格文件"
+        category: authorization
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Submit authorization letter and distributor qualification documents"
+
+      - key: item11
+        label: "查驗登記費用繳納證明"
+        category: payment
+        required: true
+        risk_rules:
+          completed: low
+          default: medium
+        action: "Provide proof of registration fee payment"

@@ -1,0 +1,214 @@
+# Cost Categories for Regulatory Review Projects
+# 法規審查專案費用類別定義
+#
+# Supports currencies: TWD, USD, EUR
+# 支援幣別：新台幣、美元、歐元
+
+exchange_rates:
+  # Base currency: TWD (新台幣)
+  USD: 31.5   # 1 USD = 31.5 TWD
+  EUR: 34.2   # 1 EUR = 34.2 TWD
+  TWD: 1.0
+
+budget_alert_threshold: 0.85   # Alert at 85% of budget used
+
+categories:
+  # ─── Government & Regulatory Fees (政府規費) ──────────────────────────────
+  government_fees:
+    label: "Government & Regulatory Fees"
+    label_zh: "政府規費"
+    color: "blue"
+    subcategories:
+      review_fee:
+        label: "TFDA Review Fee"
+        label_zh: "衛福部審查費"
+        default_currency: TWD
+        typical_range: [5000, 50000]
+      registration_fee:
+        label: "Registration Fee"
+        label_zh: "查驗登記費"
+        default_currency: TWD
+        typical_range: [3000, 30000]
+      license_renewal_fee:
+        label: "License Renewal Fee"
+        label_zh: "換發許可證費"
+        default_currency: TWD
+        typical_range: [2000, 15000]
+      express_platform_fee:
+        label: "ExPress Platform Fee"
+        label_zh: "ExPress平台費"
+        default_currency: TWD
+        typical_range: [500, 5000]
+
+  # ─── Testing & Laboratory (測試/實驗室) ───────────────────────────────────
+  testing_fees:
+    label: "Testing & Laboratory Fees"
+    label_zh: "測試/實驗室費用"
+    color: "green"
+    subcategories:
+      lab_testing:
+        label: "Laboratory Testing"
+        label_zh: "實驗室檢測"
+        default_currency: TWD
+        typical_range: [10000, 200000]
+      stability_testing:
+        label: "Stability Testing"
+        label_zh: "穩定性試驗"
+        default_currency: TWD
+        typical_range: [50000, 500000]
+      biocompatibility:
+        label: "Biocompatibility Testing"
+        label_zh: "生物相容性試驗"
+        default_currency: USD
+        typical_range: [500, 5000]
+      clinical_testing:
+        label: "Clinical Testing"
+        label_zh: "臨床試驗"
+        default_currency: TWD
+        typical_range: [100000, 2000000]
+      microbiological:
+        label: "Microbiological Testing"
+        label_zh: "微生物檢測"
+        default_currency: TWD
+        typical_range: [5000, 50000]
+
+  # ─── Consultant & Professional Services (顧問費) ──────────────────────────
+  consultant_fees:
+    label: "Consultant & Professional Fees"
+    label_zh: "顧問費/專業服務費"
+    color: "yellow"
+    subcategories:
+      ra_consultant:
+        label: "RA Consultant"
+        label_zh: "法規事務顧問"
+        default_currency: TWD
+        typical_range: [50000, 500000]
+      legal_fees:
+        label: "Legal Fees"
+        label_zh: "法律費用"
+        default_currency: TWD
+        typical_range: [20000, 200000]
+      translation:
+        label: "Translation Services"
+        label_zh: "翻譯服務"
+        default_currency: TWD
+        typical_range: [5000, 50000]
+      gmp_audit:
+        label: "GMP Audit / Inspection"
+        label_zh: "GMP稽核"
+        default_currency: USD
+        typical_range: [1000, 10000]
+      technical_writing:
+        label: "Technical Writing"
+        label_zh: "技術文件撰寫"
+        default_currency: TWD
+        typical_range: [10000, 100000]
+
+  # ─── Travel & Logistics (差旅費) ──────────────────────────────────────────
+  travel_costs:
+    label: "Travel & Logistics"
+    label_zh: "差旅費"
+    color: "cyan"
+    subcategories:
+      domestic_travel:
+        label: "Domestic Travel"
+        label_zh: "國內差旅"
+        default_currency: TWD
+        typical_range: [1000, 20000]
+      international_travel:
+        label: "International Travel"
+        label_zh: "國際差旅"
+        default_currency: USD
+        typical_range: [500, 5000]
+      accommodation:
+        label: "Accommodation"
+        label_zh: "住宿費"
+        default_currency: TWD
+        typical_range: [2000, 30000]
+      shipping_courier:
+        label: "Shipping & Courier"
+        label_zh: "快遞/運費"
+        default_currency: TWD
+        typical_range: [500, 10000]
+
+  # ─── Document & Printing (文件費用) ───────────────────────────────────────
+  document_costs:
+    label: "Document & Printing Costs"
+    label_zh: "文件/印刷費用"
+    color: "magenta"
+    subcategories:
+      printing:
+        label: "Printing & Binding"
+        label_zh: "印刷裝訂"
+        default_currency: TWD
+        typical_range: [500, 10000]
+      notarization:
+        label: "Notarization / Apostille"
+        label_zh: "公證/認證"
+        default_currency: TWD
+        typical_range: [2000, 20000]
+      certification:
+        label: "Document Certification"
+        label_zh: "文件認證"
+        default_currency: TWD
+        typical_range: [1000, 15000]
+
+  # ─── Miscellaneous (雜項) ─────────────────────────────────────────────────
+  miscellaneous:
+    label: "Miscellaneous"
+    label_zh: "雜項費用"
+    color: "white"
+    subcategories:
+      software_tools:
+        label: "Software & Tools"
+        label_zh: "軟體工具"
+        default_currency: USD
+        typical_range: [50, 500]
+      bank_fees:
+        label: "Bank & Transfer Fees"
+        label_zh: "銀行手續費"
+        default_currency: TWD
+        typical_range: [100, 2000]
+      other:
+        label: "Other"
+        label_zh: "其他"
+        default_currency: TWD
+        typical_range: [0, 50000]
+
+# ─── Project Type Budget Templates (專案預算範本) ─────────────────────────────
+project_budgets:
+  drug_registration_extension:
+    label: "Drug Registration Extension"
+    label_zh: "藥品查驗登記展延"
+    total_budget_twd: 500000
+    category_allocation:
+      government_fees: 0.15
+      testing_fees: 0.40
+      consultant_fees: 0.30
+      travel_costs: 0.08
+      document_costs: 0.05
+      miscellaneous: 0.02
+
+  food_registration:
+    label: "Food Registration"
+    label_zh: "食品查驗登記"
+    total_budget_twd: 300000
+    category_allocation:
+      government_fees: 0.10
+      testing_fees: 0.45
+      consultant_fees: 0.25
+      travel_costs: 0.10
+      document_costs: 0.07
+      miscellaneous: 0.03
+
+  medical_device_registration:
+    label: "Medical Device Registration"
+    label_zh: "醫療器材查驗登記"
+    total_budget_twd: 1000000
+    category_allocation:
+      government_fees: 0.12
+      testing_fees: 0.35
+      consultant_fees: 0.35
+      travel_costs: 0.10
+      document_costs: 0.05
+      miscellaneous: 0.03
