@@ -42,10 +42,13 @@ jobs:
           pytest tests/ \
             --tb=short \
             -v \
-            --cov=. \
+            --cov=scripts.review \
+            --cov=database \
+            --cov=auth \
+            --cov-config=.coveragerc \
             --cov-report=term-missing \
             --cov-report=xml \
-            --cov-fail-under=70
+            --cov-fail-under=80
         continue-on-error: true
 
       - name: Upload coverage report
