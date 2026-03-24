@@ -1,0 +1,44 @@
+[flake8]
+max-line-length = 200
+extend-ignore =
+    # Whitespace alignment (used for column alignment in SQLAlchemy models)
+    E221,
+    # Expected 2 blank lines
+    E302, E303, E305,
+    # Module level import not at top (needed for optional/conditional imports)
+    E402,
+    # Whitespace before ':' (black-compatible)
+    E203,
+    # Line break before binary operator (black-compatible)
+    W503,
+    # Blank line / trailing whitespace (auto-formatted by some editors)
+    W291, W293,
+    # Unused imports (required for re-exports and optional dependency handling)
+    F401,
+    # f-string without placeholders (template strings)
+    F541,
+    # Global statement for reading only
+    F824,
+    # Local variable assigned but never used
+    F841,
+    # Multiple spaces before/after keyword
+    E251, E272,
+    # Continuation line indentation
+    E127, E128,
+    # Ambiguous variable name (l, O, I)
+    E741,
+    # Multiple statements on one line (after if/for)
+    E702,
+    # Missing whitespace after ','
+    E231,
+exclude =
+    __pycache__,
+    tests/__pycache__,
+    .git,
+    dist,
+    build,
+    htmlcov,
+    *.egg-info
+per-file-ignores =
+    # AI modules: relaxed rules for draft/experimental code
+    ai/*.py: E127,E301,E722

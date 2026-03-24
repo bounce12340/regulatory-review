@@ -97,7 +97,7 @@ class RegulatoryDashboard:
         """Parse completion rate string to float."""
         try:
             return float(completion_str.replace('%', ''))
-        except:
+        except Exception:
             return 0.0
     
     def _get_deadline(self, project_name: str) -> Optional[date]:

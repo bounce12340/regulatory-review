@@ -119,13 +119,24 @@ def sync_to_openclaw(project_name: str, report_data: dict):
             )
             with urllib.request.urlopen(req, timeout=2) as response:
                 return {'success': True, 'method': 'http', 'file': str(sync_file)}
-        except:
+        except Exception:
             pass
         
         return {'success': True, 'method': 'file', 'file': str(sync_file)}
         
     except Exception as e:
         return {'success': False, 'error': str(e)}
+
+# ── Phase 4: AI document analysis ────────────────────────────────────────────
+_AI_AVAILABLE = False
+try:
+    _AI_ROOT = Path(__file__).parent.parent
+    sys.path.insert(0, str(_AI_ROOT))
+    from ai.gap_analyzer import GapAnalyzer, GapReport, SCHEMA_TYPE_MAP
+    from ai.upload_handler import DocumentParser
+    _AI_AVAILABLE = True
+except Exception as _ai_err:
+    pass  # gracefully degrade if AI deps missing
 
 try:
     from outputs.pdf_generator import PDFGenerator
@@ -1326,6 +1337,238 @@ def render_projects_page():
 
 # ── Main Streamlit app ────────────────────────────────────────────────────────
 
+# ── Phase 4: AI Document Analysis Page ────────────────────────────────────────
+
+def render_ai_analysis_page(dark: bool = False):
+    """AI 文件分析頁面 — 上傳 PDF/Word，自動比對 TFDA 法規，產生缺口報告。"""
+
+    st.markdown("""
+    <div class="page-header">
+        <div class="page-header-badge">🤖 AI Analysis</div>
+        <h1>AI 文件缺口分析</h1>
+        <p class="page-header-sub">上傳查驗登記文件，AI 自動與 TFDA 法規比對並產生缺口報告</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if not _AI_AVAILABLE:
+        st.error(
+            "AI 分析模組未載入。請安裝相依套件：\n\n"
+            "```bash\npip install anthropic pypdf openpyxl\n```"
+        )
+        return
+
+    # ── Session state defaults ─────────────────────────────────────────────
+    for key, default in [
+        ("ai_result", None),
+        ("ai_filename", ""),
+        ("ai_running", False),
+    ]:
+        if key not in st.session_state:
+            st.session_state[key] = default
+
+    # ── Upload & Config panel ──────────────────────────────────────────────
+    card_bg = "#1e293b" if dark else "#ffffff"
+    border_c = "#334155" if dark else "#e2e8f0"
+    txt_pri  = "#f1f5f9" if dark else "#1e293b"
+    txt_sec  = "#94a3b8" if dark else "#64748b"
+
+    st.markdown(f"""
+    <div style="background:{card_bg};border:1px solid {border_c};border-radius:12px;
+                padding:24px;margin-bottom:20px">
+        <div style="font-size:1rem;font-weight:600;color:{txt_pri};margin-bottom:16px">
+            📁 文件上傳與設定
+        </div>
+    """, unsafe_allow_html=True)
+
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        uploaded_file = st.file_uploader(
+            "拖曳或點選上傳文件",
+            type=["pdf", "docx", "doc", "xlsx", "xls", "txt"],
+            help="支援 PDF、Word（.docx）、Excel（.xlsx）、純文字格式",
+        )
+    with c2:
+        schema_display_options = list(SCHEMA_TYPE_MAP.values())
+        schema_display = st.selectbox(
+            "申請類型",
+            schema_display_options,
+            help="選擇與文件對應的 TFDA 法規申請類型",
+        )
+        # Map display name back to schema key
+        schema_key_map = {v: k for k, v in SCHEMA_TYPE_MAP.items()}
+        schema_key = schema_key_map.get(schema_display, "drug_registration_extension")
+
+    api_key_input = st.text_input(
+        "Anthropic API Key（可選，優先使用環境變數 ANTHROPIC_API_KEY）",
+        type="password",
+        placeholder="sk-ant-...",
+        help="若已設定環境變數，可留空",
+    )
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # ── Analysis trigger ───────────────────────────────────────────────────
+    can_analyze = uploaded_file is not None and not st.session_state.ai_running
+    if st.button("🔍 開始 AI 分析", disabled=not can_analyze,
+                 type="primary", use_container_width=True):
+        st.session_state.ai_result = None
+        st.session_state.ai_running = True
+
+        with st.spinner("正在分析文件… 這可能需要 30–90 秒，請稍候。"):
+            try:
+                analyzer = GapAnalyzer(api_key=api_key_input or None)
+                file_bytes = uploaded_file.read()
+                report = analyzer.analyze(
+                    file_bytes=file_bytes,
+                    filename=uploaded_file.name,
+                    project_type=schema_display,
+                )
+                st.session_state.ai_result = report
+                st.session_state.ai_filename = uploaded_file.name
+            except Exception as exc:
+                st.error(f"分析失敗：{exc}")
+            finally:
+                st.session_state.ai_running = False
+        st.rerun()
+
+    if not can_analyze and uploaded_file is None:
+        st.info("請先上傳文件，再點選「開始 AI 分析」。")
+
+    # ── Results ────────────────────────────────────────────────────────────
+    report: GapReport = st.session_state.ai_result
+    if report is None:
+        return
+
+    if report.error:
+        st.error(f"分析錯誤：{report.error}")
+        return
+
+    st.markdown("---")
+
+    # ── Score cards ────────────────────────────────────────────────────────
+    risk_color = {"high": "#ef4444", "medium": "#f59e0b", "low": "#10b981"}.get(
+        report.risk_assessment, "#94a3b8"
+    )
+    score_color = "#10b981" if report.completeness_score >= 80 else \
+                  "#f59e0b" if report.completeness_score >= 50 else "#ef4444"
+
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.markdown(f"""
+        <div style="background:{card_bg};border:1px solid {border_c};border-radius:10px;
+                    padding:16px;text-align:center">
+            <div style="font-size:2rem;font-weight:700;color:{score_color}">
+                {report.completeness_score}%
+            </div>
+            <div style="font-size:0.75rem;color:{txt_sec};margin-top:4px">完整度評分</div>
+        </div>""", unsafe_allow_html=True)
+    with m2:
+        st.markdown(f"""
+        <div style="background:{card_bg};border:1px solid {border_c};border-radius:10px;
+                    padding:16px;text-align:center">
+            <div style="font-size:2rem;font-weight:700;color:{risk_color}">
+                {report.risk_assessment.upper()}
+            </div>
+            <div style="font-size:0.75rem;color:{txt_sec};margin-top:4px">風險等級</div>
+        </div>""", unsafe_allow_html=True)
+    with m3:
+        st.markdown(f"""
+        <div style="background:{card_bg};border:1px solid {border_c};border-radius:10px;
+                    padding:16px;text-align:center">
+            <div style="font-size:2rem;font-weight:700;color:#ef4444">{len(report.high_gaps)}</div>
+            <div style="font-size:0.75rem;color:{txt_sec};margin-top:4px">高風險缺口</div>
+        </div>""", unsafe_allow_html=True)
+    with m4:
+        st.markdown(f"""
+        <div style="background:{card_bg};border:1px solid {border_c};border-radius:10px;
+                    padding:16px;text-align:center">
+            <div style="font-size:2rem;font-weight:700;color:{txt_pri}">
+                {len(report.compliant_items)}
+            </div>
+            <div style="font-size:0.75rem;color:{txt_sec};margin-top:4px">符合項目</div>
+        </div>""", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Summary ────────────────────────────────────────────────────────────
+    if report.summary:
+        st.markdown(f"""
+        <div style="background:{card_bg};border:1px solid {border_c};border-radius:10px;
+                    padding:20px;margin-bottom:16px">
+            <div style="font-weight:600;color:{txt_pri};margin-bottom:8px">📝 分析摘要</div>
+            <div style="color:{txt_sec};line-height:1.6">{report.summary}</div>
+            <div style="margin-top:12px;font-size:0.75rem;color:{txt_sec}">
+                預估審查時間：{report.estimated_review_time} ·
+                Token 用量：輸入 {report.token_usage.get("input_tokens",0):,} /
+                輸出 {report.token_usage.get("output_tokens",0):,} ·
+                預估費用：NT${report.cost_ntd:.2f}
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+    # ── Gap items table ────────────────────────────────────────────────────
+    if report.gaps:
+        st.markdown(f"""
+        <div style="background:{card_bg};border:1px solid {border_c};border-radius:10px;
+                    padding:20px;margin-bottom:16px">
+            <div style="font-weight:600;color:{txt_pri};margin-bottom:16px">
+                ⚠️ 缺口清單（{len(report.gaps)} 項）
+            </div>
+        """, unsafe_allow_html=True)
+
+        sev_icon  = {"high": "🔴", "medium": "🟡", "low": "🟢"}
+        status_zh = {
+            "missing": "缺失", "incomplete": "不完整",
+            "non_compliant": "不符合", "present": "符合",
+        }
+
+        for g in sorted(report.gaps, key=lambda x: {"high": 0, "medium": 1, "low": 2}.get(x.severity, 3)):
+            icon = sev_icon.get(g.severity, "⚪")
+            sev_label_color = {"high": "#ef4444", "medium": "#f59e0b", "low": "#10b981"}.get(g.severity, "#94a3b8")
+            status_label = status_zh.get(g.status, g.status)
+            with st.expander(f"{icon} {g.requirement}  —  {status_label}", expanded=(g.severity == "high")):
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.markdown(f"**嚴重程度：** <span style='color:{sev_label_color};font-weight:600'>{g.severity.upper()}</span>", unsafe_allow_html=True)
+                    st.markdown(f"**說明：** {g.explanation}")
+                with col_b:
+                    st.markdown(f"**建議：** {g.recommendation}")
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # ── Action items ───────────────────────────────────────────────────────
+    if report.action_items:
+        st.markdown(f"""
+        <div style="background:{card_bg};border:1px solid {border_c};border-radius:10px;
+                    padding:20px;margin-bottom:16px">
+            <div style="font-weight:600;color:{txt_pri};margin-bottom:12px">🎯 優先處理項目</div>
+        """, unsafe_allow_html=True)
+        for i, item in enumerate(report.action_items, 1):
+            st.markdown(f"**{i}.** {item}")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # ── Export buttons ─────────────────────────────────────────────────────
+    st.markdown("#### 匯出報告")
+    e1, e2, _e3 = st.columns([1, 1, 2])
+    with e1:
+        md_content = report.to_markdown()
+        st.download_button(
+            "⬇ 下載 Markdown 報告",
+            data=md_content.encode("utf-8"),
+            file_name=f"gap_report_{report.filename}.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
+    with e2:
+        json_content = json.dumps(report.to_dict(), ensure_ascii=False, indent=2)
+        st.download_button(
+            "⬇ 下載 JSON 報告",
+            data=json_content.encode("utf-8"),
+            file_name=f"gap_report_{report.filename}.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+
+
 def main():
     st.set_page_config(
         page_title="Regulatory Review",
@@ -1376,10 +1619,11 @@ def main():
         """, unsafe_allow_html=True)
 
         nav_items = [
-            ("overview",    "📋", "Project Overview"),
-            ("timeline",    "📅", "Timeline & Deadlines"),
-            ("comparison",  "📊", "Multi-Project View"),
-            ("projects",    "📁", "Projects Management"),
+            ("overview",     "📋", "Project Overview"),
+            ("timeline",     "📅", "Timeline & Deadlines"),
+            ("comparison",   "📊", "Multi-Project View"),
+            ("projects",     "📁", "Projects Management"),
+            ("ai_analysis",  "🤖", "AI 文件分析"),
         ]
         for key, icon, label in nav_items:
             if st.button(f"{icon}  {label}", key=f"nav_{key}",
@@ -1460,6 +1704,11 @@ def main():
             render_projects_page()
         else:
             st.warning("Projects management requires the auth/database modules.")
+        return
+
+    # ── VIEW: AI DOCUMENT ANALYSIS ────────────────────────────────────────
+    if st.session_state.view == "ai_analysis":
+        render_ai_analysis_page(dark)
         return
 
     # ── Load data: DB first, JSON fallback ────────────────────────────────
