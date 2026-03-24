@@ -4,7 +4,6 @@ services:
   - type: web
     name: regulatory-review
     runtime: python
-    pythonVersion: 3.11
     buildCommand: pip install -r requirements.txt
     startCommand: streamlit run scripts/web_dashboard.py --server.port=$PORT --server.address=0.0.0.0
     envVars:
@@ -13,8 +12,8 @@ services:
       - key: STREAMLIT_SERVER_PORT
         value: 10000
       - key: STREAMLIT_SERVER_HEADLESS
-        value: true
+        value: "true"
       - key: STREAMLIT_SERVER_ENABLE_CORS
-        value: false
+        value: "false"
     healthCheckPath: /_stcore/health
     autoDeploy: true
