@@ -23,6 +23,7 @@ requests==2.31.0
 urllib3==2.2.1
 
 # Database
+sqlalchemy==2.0.29
 psycopg2-binary==2.9.9
 supabase==2.4.0
 

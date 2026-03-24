@@ -1,41 +1,5 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
+# Binary files
+dist/*.exe
+dist/*.zip
 build/
-develop-eggs/
-dist/
-*.egg-info/
-*.egg
-
-# Virtual environments
-venv/
-env/
-ENV/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Project specific
-*.log
-*.tmp
-.env
-config/local*
-outputs/temp/
-
-# PyInstaller
-*.manifest
-*.spec
-build/
-
-# But keep the dist folder for releases
-!dist/.gitkeep
+*.pkg

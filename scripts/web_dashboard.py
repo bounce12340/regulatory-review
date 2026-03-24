@@ -11,6 +11,25 @@ from pathlib import Path
 from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional
 
+# ── Auth / DB (Phase 2) ───────────────────────────────────────────────────────
+_PHASE2_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(_PHASE2_ROOT))
+
+_AUTH_AVAILABLE = False
+try:
+    from database.db import init_db, get_db
+    from database.models import Company, User, Project, ChecklistItem
+    from auth.register import register_company_and_admin, register_user
+    from auth.login import verify_login, get_company_for_user
+    from auth.session import (
+        init_auth_session, is_authenticated,
+        get_current_user, get_current_company,
+        login_session, logout_session, require_role,
+    )
+    _AUTH_AVAILABLE = True
+except Exception as _auth_err:
+    pass  # gracefully degrade to single-user mode if deps missing
+
 # ── Streamlit & Plotly ───────────────────────────────────────────────────────
 try:
     import streamlit as st
@@ -1004,6 +1023,307 @@ def export_markdown(report: Dict) -> str:
     return "\n".join(lines)
 
 
+# ── Phase 2: DB-aware data helpers ───────────────────────────────────────────
+
+def load_project_names_db(company_id: int) -> List[str]:
+    """Return project slugs for the current tenant from SQLite."""
+    try:
+        with get_db() as db:
+            projects = (
+                db.query(Project)
+                .filter_by(company_id=company_id, status="active")
+                .order_by(Project.name)
+                .all()
+            )
+            return [p.slug for p in projects]
+    except Exception:
+        return []
+
+
+def load_project_report_db(project_slug: str, company_id: int) -> Optional[Dict]:
+    """Build a report dict from SQLite (same shape as JSON report)."""
+    try:
+        with get_db() as db:
+            project = (
+                db.query(Project)
+                .filter_by(company_id=company_id, slug=project_slug)
+                .first()
+            )
+            if project is None:
+                return None
+            items_raw = (
+                db.query(ChecklistItem)
+                .filter_by(project_id=project.id)
+                .all()
+            )
+            items = [
+                {
+                    "item":       ci.item_name,
+                    "category":   ci.category or "",
+                    "status":     ci.status,
+                    "notes":      ci.notes or "",
+                    "risk_level": ci.risk_level,
+                }
+                for ci in items_raw
+            ]
+            completed   = sum(1 for i in items if i["status"] == "completed")
+            high_risk   = [i for i in items if i["risk_level"] == "high"]
+            total       = len(items)
+            completion  = (completed / total * 100) if total else 0.0
+            return {
+                "review_date":    datetime.utcnow().isoformat(),
+                "project":        project.slug,
+                "document_type":  project.schema_type,
+                "overall_status": "needs_attention" if high_risk else "on_track",
+                "completion_rate": f"{completion:.1f}%",
+                "items":          items,
+                "risks":          high_risk,
+                "action_items":   [
+                    {"item": i["item"], "priority": "high", "action": "立即處理"}
+                    for i in high_risk
+                ],
+                "summary": {
+                    "completed":       completed,
+                    "total":           total,
+                    "high_risk_items": len(high_risk),
+                },
+                "_deadline": project.deadline,
+            }
+    except Exception:
+        return None
+
+
+def upsert_checklist_item_db(project_slug: str, company_id: int, item_name: str,
+                              status: str, notes: str, risk_level: str, user_id: int):
+    """Update a checklist item status in SQLite."""
+    try:
+        with get_db() as db:
+            project = db.query(Project).filter_by(company_id=company_id, slug=project_slug).first()
+            if project is None:
+                return False
+            ci = (
+                db.query(ChecklistItem)
+                .filter_by(project_id=project.id, item_name=item_name)
+                .first()
+            )
+            if ci:
+                ci.status     = status
+                ci.notes      = notes
+                ci.risk_level = risk_level
+                ci.updated_by = user_id
+                ci.updated_at = datetime.utcnow()
+            return True
+    except Exception:
+        return False
+
+
+# ── Phase 2: Auth page ────────────────────────────────────────────────────────
+
+def render_auth_page():
+    """Login / Register page shown when user is not authenticated."""
+    st.markdown(LIGHT_CSS, unsafe_allow_html=True)
+
+    # Centre the form
+    _, col, _ = st.columns([1, 2, 1])
+    with col:
+        st.markdown("""
+        <div style="text-align:center;padding:40px 0 24px 0">
+            <div style="font-size:3rem">⚕</div>
+            <h1 style="font-size:1.6rem;font-weight:700;color:#1e3a5c;margin:8px 0 4px 0">RegReview</h1>
+            <p style="color:#64748b;font-size:0.9rem">法規審查管理系統 · Regulatory Review Platform</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        tab_login, tab_register = st.tabs(["登入 Login", "註冊 Register"])
+
+        # ── Login tab ──────────────────────────────────────────────────
+        with tab_login:
+            with st.form("login_form"):
+                email    = st.text_input("電子郵件 Email", placeholder="you@company.com")
+                password = st.text_input("密碼 Password", type="password")
+                submitted = st.form_submit_button("登入", use_container_width=True, type="primary")
+
+            if submitted:
+                if not email or not password:
+                    st.error("請填寫所有欄位。")
+                else:
+                    user = verify_login(email, password)
+                    if user is None:
+                        st.error("電子郵件或密碼錯誤。")
+                    else:
+                        company = get_company_for_user(user.id)
+                        if company is None:
+                            st.error("找不到所屬公司，請聯絡管理員。")
+                        else:
+                            login_session(user, company)
+                            st.success(f"歡迎回來，{user.full_name}！")
+                            st.rerun()
+
+        # ── Register tab ───────────────────────────────────────────────
+        with tab_register:
+            st.markdown(
+                '<p style="color:#64748b;font-size:0.82rem;margin-bottom:12px">'
+                '建立新公司帳號（第一位使用者自動成為管理員）</p>',
+                unsafe_allow_html=True,
+            )
+            with st.form("register_form"):
+                company_name = st.text_input("公司名稱 Company Name", placeholder="Universal Integrated Corp.")
+                full_name    = st.text_input("姓名 Full Name", placeholder="Josh Tsai")
+                reg_email    = st.text_input("電子郵件 Email", placeholder="admin@company.com")
+                reg_pw       = st.text_input("密碼 Password (min 8 chars)", type="password")
+                reg_pw2      = st.text_input("確認密碼 Confirm Password", type="password")
+                reg_submit   = st.form_submit_button("建立帳號", use_container_width=True, type="primary")
+
+            if reg_submit:
+                if not all([company_name, full_name, reg_email, reg_pw, reg_pw2]):
+                    st.error("請填寫所有欄位。")
+                elif reg_pw != reg_pw2:
+                    st.error("兩次密碼輸入不一致。")
+                else:
+                    try:
+                        company, user = register_company_and_admin(
+                            company_name=company_name,
+                            admin_email=reg_email,
+                            admin_password=reg_pw,
+                            admin_full_name=full_name,
+                        )
+                        login_session(user, company)
+                        st.success(f"帳號建立成功！歡迎，{user.full_name}！")
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(str(e))
+                    except Exception as e:
+                        st.error(f"系統錯誤：{e}")
+
+
+# ── Phase 2: Projects management page ────────────────────────────────────────
+
+_SCHEMA_OPTIONS = {
+    "drug_registration_extension": "藥品查驗登記 (換發)",
+    "food_registration":           "食品登錄",
+    "medical_device_registration": "醫療器材查驗登記",
+}
+
+
+def render_projects_page():
+    """Full CRUD page for projects (admin / member)."""
+    company = get_current_company()
+    user    = get_current_user()
+    if company is None:
+        st.error("Session error — please log in again.")
+        return
+
+    st.markdown("""
+    <div class="page-header">
+        <div class="page-header-badge">📁 Projects</div>
+        <h1>專案管理</h1>
+        <p class="page-header-sub">建立、編輯、刪除法規審查專案</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── List existing projects ─────────────────────────────────────────
+    with get_db() as db:
+        projects = (
+            db.query(Project)
+            .filter_by(company_id=company["id"])
+            .order_by(Project.created_at.desc())
+            .all()
+        )
+        project_list = [
+            {
+                "id":          p.id,
+                "name":        p.name,
+                "slug":        p.slug,
+                "schema_type": p.schema_type,
+                "deadline":    p.deadline,
+                "status":      p.status,
+                "created_at":  p.created_at,
+            }
+            for p in projects
+        ]
+
+    if project_list:
+        st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">📋</div> 現有專案</div>', unsafe_allow_html=True)
+        for p in project_list:
+            dl_str = p["deadline"].strftime("%Y-%m-%d") if p["deadline"] else "未設定"
+            schema_label = _SCHEMA_OPTIONS.get(p["schema_type"], p["schema_type"])
+            col_info, col_actions = st.columns([4, 1])
+            with col_info:
+                st.markdown(f"""
+                <div style="padding:12px 0;border-bottom:1px solid #e2e8f0">
+                    <span style="font-weight:600;font-size:0.95rem;color:#1e293b">{p['name']}</span>
+                    <span style="margin-left:12px;font-size:0.75rem;color:#64748b">{schema_label}</span>
+                    <span style="margin-left:12px;font-size:0.75rem;color:#64748b">截止: {dl_str}</span>
+                    <span style="margin-left:12px;font-size:0.75rem;padding:2px 8px;border-radius:999px;
+                                background:#dbeafe;color:#1d4ed8">{p['status']}</span>
+                </div>
+                """, unsafe_allow_html=True)
+            with col_actions:
+                if require_role("admin", "member"):
+                    if st.button("封存", key=f"archive_{p['id']}"):
+                        with get_db() as db2:
+                            proj = db2.query(Project).filter_by(id=p["id"]).first()
+                            if proj:
+                                proj.status = "archived"
+                        st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        st.info("尚無專案。請使用下方表單建立第一個專案。")
+
+    # ── Create new project form ────────────────────────────────────────
+    if require_role("admin", "member"):
+        st.markdown('<div class="section-card"><div class="section-title"><div class="title-icon">➕</div> 建立新專案</div>', unsafe_allow_html=True)
+        with st.form("create_project_form"):
+            proj_name    = st.text_input("專案名稱", placeholder="Fenogal")
+            schema_type  = st.selectbox("文件類型", options=list(_SCHEMA_OPTIONS.keys()),
+                                        format_func=lambda k: _SCHEMA_OPTIONS[k])
+            deadline_val = st.date_input("截止日期", value=date.today())
+            description  = st.text_area("說明 (選填)", height=80)
+            num_items    = st.number_input("初始檢查項目數量", min_value=0, max_value=20, value=0)
+            create_btn   = st.form_submit_button("建立專案", type="primary")
+
+        if create_btn:
+            if not proj_name.strip():
+                st.error("請輸入專案名稱。")
+            else:
+                import re as _re
+                slug = _re.sub(r"[^\w-]", "-", proj_name.strip().lower())[:100]
+                try:
+                    with get_db() as db:
+                        existing = db.query(Project).filter_by(
+                            company_id=company["id"], slug=slug
+                        ).first()
+                        if existing:
+                            st.error(f"專案 {slug!r} 已存在。")
+                        else:
+                            new_proj = Project(
+                                company_id=company["id"],
+                                created_by=user["id"],
+                                name=proj_name.strip(),
+                                slug=slug,
+                                schema_type=schema_type,
+                                deadline=datetime.combine(deadline_val, datetime.min.time()),
+                                description=description.strip() or None,
+                            )
+                            db.add(new_proj)
+                            db.flush()
+                            # Add blank checklist items if requested
+                            for i in range(int(num_items)):
+                                db.add(ChecklistItem(
+                                    project_id=new_proj.id,
+                                    item_key=f"item{i+1}",
+                                    item_name=f"項目 {i+1}",
+                                    status="pending",
+                                    risk_level="medium",
+                                    updated_by=user["id"],
+                                ))
+                    st.success(f"專案 {proj_name.strip()!r} 建立成功！")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"建立失敗：{e}")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
 # ── Main Streamlit app ────────────────────────────────────────────────────────
 
 def main():
@@ -1013,6 +1333,14 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded",
     )
+
+    # ── Phase 2: DB init + session ────────────────────────────────────────
+    if _AUTH_AVAILABLE:
+        try:
+            init_db()
+        except Exception:
+            pass
+        init_auth_session()
 
     # ── Session state defaults ─────────────────────────────────────────────
     if "dark_mode" not in st.session_state:
@@ -1024,6 +1352,11 @@ def main():
 
     # ── Inject CSS ────────────────────────────────────────────────────────
     st.markdown(DARK_CSS if dark else LIGHT_CSS, unsafe_allow_html=True)
+
+    # ── Auth gate ─────────────────────────────────────────────────────────
+    if _AUTH_AVAILABLE and not is_authenticated():
+        render_auth_page()
+        return
 
     # ── Sidebar ───────────────────────────────────────────────────────────
     with st.sidebar:
@@ -1046,9 +1379,9 @@ def main():
             ("overview",    "📋", "Project Overview"),
             ("timeline",    "📅", "Timeline & Deadlines"),
             ("comparison",  "📊", "Multi-Project View"),
+            ("projects",    "📁", "Projects Management"),
         ]
         for key, icon, label in nav_items:
-            active = "active" if st.session_state.view == key else ""
             if st.button(f"{icon}  {label}", key=f"nav_{key}",
                          use_container_width=True):
                 st.session_state.view = key
@@ -1061,13 +1394,20 @@ def main():
                     letter-spacing:0.08em;color:#64748b;margin-bottom:8px">Project</div>
         """, unsafe_allow_html=True)
 
-        project_names = load_project_names()
+        # Load project names: from DB if authenticated, else from JSON files
+        if _AUTH_AVAILABLE and is_authenticated():
+            _company = get_current_company()
+            _db_names = load_project_names_db(_company["id"]) if _company else []
+            project_names = _db_names if _db_names else load_project_names()
+        else:
+            project_names = load_project_names()
+
         selected = st.selectbox("", project_names, label_visibility="collapsed")
 
         projects_root_input = st.text_input(
             "Data directory",
             value=str(PROJECTS_ROOT),
-            help="Directory containing project folders",
+            help="Directory containing project folders (JSON fallback)",
         )
         projects_root = Path(projects_root_input).expanduser()
 
@@ -1090,15 +1430,47 @@ def main():
             time.sleep(0.1)
             st.rerun()
 
+        # ── User info & logout (Phase 2) ───────────────────────────────
+        if _AUTH_AVAILABLE and is_authenticated():
+            _u = get_current_user()
+            _c = get_current_company()
+            if _u and _c:
+                st.markdown(
+                    f'<div style="font-size:0.72rem;color:#94a3b8;margin-top:12px">'
+                    f'<b style="color:#cbd5e1">{_u["name"]}</b><br>'
+                    f'{_u["email"]}<br>'
+                    f'<span style="font-size:0.65rem;opacity:0.7">{_c["name"]} · {_u["role"]}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            if st.button("登出 Logout", use_container_width=True):
+                logout_session()
+                st.rerun()
+
         st.markdown(
             f'<div style="font-size:0.68rem;color:#475569;margin-top:16px;'
             f'text-align:center">'
-            f'v2.0 · {datetime.now().strftime("%Y-%m-%d")}</div>',
+            f'v3.0 · {datetime.now().strftime("%Y-%m-%d")}</div>',
             unsafe_allow_html=True
         )
 
-    # ── Load data ─────────────────────────────────────────────────────────
-    report = load_project_report(selected, projects_root)
+    # ── VIEW: PROJECTS MANAGEMENT ─────────────────────────────────────────
+    if st.session_state.view == "projects":
+        if _AUTH_AVAILABLE:
+            render_projects_page()
+        else:
+            st.warning("Projects management requires the auth/database modules.")
+        return
+
+    # ── Load data: DB first, JSON fallback ────────────────────────────────
+    report = None
+    if _AUTH_AVAILABLE and is_authenticated():
+        _company = get_current_company()
+        if _company:
+            report = load_project_report_db(selected.replace(" (demo)", ""), _company["id"])
+    if report is None:
+        report = load_project_report(selected, projects_root)
+
     if not report:
         st.error(f"No review data found for **{selected}**.")
         return
@@ -1109,7 +1481,12 @@ def main():
     comp_pct                   = _parse_completion(report.get("completion_rate", "0%"))
     overall_status             = report.get("overall_status", "unknown")
     high_risk_count            = summary.get("high_risk_items", 0)
-    deadline                   = DEADLINES.get(project_name.lower())
+    # Deadline: from DB report or hardcoded map
+    _db_deadline               = report.get("_deadline")
+    deadline                   = (
+        _db_deadline.date() if _db_deadline and hasattr(_db_deadline, "date")
+        else DEADLINES.get(project_name.lower())
+    )
     days_left                  = (deadline - date.today()).days if deadline else None
 
     # ── VIEW: OVERVIEW ─────────────────────────────────────────────────────
