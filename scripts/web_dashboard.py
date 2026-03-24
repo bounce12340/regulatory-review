@@ -8,7 +8,7 @@ Interactive dashboard for monitoring regulatory project status
 import json
 import sys
 from pathlib import Path
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from typing import Dict, List, Optional
 
 # ── Auth / DB (Phase 2) ───────────────────────────────────────────────────────
@@ -18,8 +18,8 @@ sys.path.insert(0, str(_PHASE2_ROOT))
 _AUTH_AVAILABLE = False
 try:
     from database.db import init_db, get_db
-    from database.models import Company, User, Project, ChecklistItem
-    from auth.register import register_company_and_admin, register_user
+    from database.models import Project, ChecklistItem
+    from auth.register import register_company_and_admin
     from auth.login import verify_login, get_company_for_user
     from auth.session import (
         init_auth_session, is_authenticated,
@@ -27,13 +27,12 @@ try:
         login_session, logout_session, require_role,
     )
     _AUTH_AVAILABLE = True
-except Exception as _auth_err:
+except Exception:
     pass  # gracefully degrade to single-user mode if deps missing
 
 # ── Streamlit & Plotly ───────────────────────────────────────────────────────
 try:
     import streamlit as st
-    import plotly.express as px
     import plotly.graph_objects as go
     import pandas as pd
     STREAMLIT_AVAILABLE = True
@@ -2178,8 +2177,13 @@ def main():
                             for i in sub_items
                         ])
 
-                        def cs(val): c = STATUS_COLORS.get(val, "#94a3b8"); return f"background-color:{c}20;color:{c};font-weight:600"
-                        def cr(val): c = RISK_COLORS.get(val, "#94a3b8");   return f"background-color:{c}20;color:{c};font-weight:600"
+                        def cs(val):
+                            c = STATUS_COLORS.get(val, "#94a3b8")
+                            return f"background-color:{c}20;color:{c};font-weight:600"
+
+                        def cr(val):
+                            c = RISK_COLORS.get(val, "#94a3b8")
+                            return f"background-color:{c}20;color:{c};font-weight:600"
 
                         st.dataframe(
                             sub_df.style.map(cs, subset=["Status"]).map(cr, subset=["Risk"]),
