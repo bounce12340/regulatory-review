@@ -14,11 +14,23 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
-import chromadb
-from chromadb.config import Settings
+try:
+    import chromadb
+    from chromadb.config import Settings
+    CHROMADB_AVAILABLE = True
+except ImportError:
+    CHROMADB_AVAILABLE = False
+    # Fallback implementation
+    class MockChromaDB:
+        def __init__(self, *args, **kwargs):
+            pass
+    chromadb = MockChromaDB
 
 # Import local modules
-from .upload_handler import DocumentParser, ParsedDocument
+try:
+    from .upload_handler import DocumentParser, ParsedDocument
+except ImportError:
+    from upload_handler import DocumentParser, ParsedDocument
 
 
 @dataclass
@@ -64,6 +76,12 @@ class RegulatoryKnowledgeBase:
         Args:
             persist_directory: Directory to persist ChromaDB data
         """
+        if not CHROMADB_AVAILABLE:
+            raise ImportError(
+                "ChromaDB is not installed. "
+                "Please install it with: pip install chromadb"
+            )
+        
         if persist_directory is None:
             persist_directory = str(Path.home() / ".regulatory_kb" / "chroma_db")
         
