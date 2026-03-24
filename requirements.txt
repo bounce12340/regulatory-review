@@ -31,8 +31,8 @@ supabase==2.4.0
 PyJWT==2.8.0
 bcrypt==4.1.2
 
-# AI / LLM Integration
-anthropic==0.21.2
+# AI / LLM Integration (Phase 4)
+anthropic>=0.40.0
 openai==1.14.0
 chromadb==0.4.24
 langchain==0.1.13
@@ -40,8 +40,10 @@ langchain-community==0.0.29
 tiktoken==0.6.0
 
 # Document parsing
+pypdf>=4.0.0
 pypdf2==3.0.1
 pdfplumber==0.11.0
+openpyxl>=3.1.0
 
 # Utilities
 python-dotenv==1.0.1
