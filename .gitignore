@@ -3,3 +3,12 @@ dist/*.exe
 dist/*.zip
 build/
 *.pkg
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Test coverage
+.coverage
+htmlcov/
