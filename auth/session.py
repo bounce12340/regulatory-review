@@ -93,13 +93,13 @@ def login_session(user, company):
         import streamlit as st
         st.session_state[_AUTH_KEY] = {
             "authenticated": True,
-            "user_id":       getattr(user, "id", user.get("id")),
-            "user_email":    getattr(user, "email", user.get("email")),
-            "user_name":     getattr(user, "full_name", user.get("full_name")),
-            "user_role":     getattr(user, "role", user.get("role")),
-            "company_id":    getattr(company, "id", company.get("id")),
-            "company_name":  getattr(company, "name", company.get("name")),
-            "company_slug":  getattr(company, "slug", company.get("slug")),
+            "user_id":       getattr(user, "id", None),
+            "user_email":    getattr(user, "email", None),
+            "user_name":     getattr(user, "full_name", None),
+            "user_role":     getattr(user, "role", None),
+            "company_id":    getattr(company, "id", None),
+            "company_name":  getattr(company, "name", None),
+            "company_slug":  getattr(company, "slug", None),
         }
     except ImportError:
         pass
