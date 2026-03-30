@@ -3,3 +3,8 @@ dist/*.exe
 dist/*.zip
 build/
 *.pkg
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Claude API client for TFDA regulatory gap analysis.
-Uses claude-opus-4-6 with adaptive thinking and streaming.
+Multi-provider LLM client for TFDA regulatory gap analysis.
+Supports: Anthropic (Claude), OpenAI (GPT-4), Google (Gemini).
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ SYSTEM_PROMPT = """你是一位資深的台灣 TFDA（食品藥物管理署）�
 7. 評估整體風險等級及預估審查時程
 
 回應語言：繁體中文
-專業術語：使用 RA（Regulatory Affairs）標準術語
+專業術語：使用 RA（Regulatory Affairs）標準術�
 輸出格式：嚴格遵循指定的 JSON 格式"""
 
 
@@ -81,35 +81,60 @@ def _build_analysis_prompt(doc_text: str, project_type: str,
 - 請務必分析所有要求項目，不可遺漏"""
 
 
-class TFDAAnalysisClient:
+def _detect_provider(api_key: str) -> str:
+    """Detect provider from API key format."""
+    if not api_key:
+        return "anthropic"  # default
+    key_lower = api_key.lower()
+    if key_lower.startswith("sk-ant"):
+        return "anthropic"
+    if key_lower.startswith("ai"):
+        return "gemini"
+    return "openai"  # sk-... and others default to OpenAI
+
+
+class MultiProviderLLMClient:
     """
-    Wraps the Anthropic Claude API for TFDA gap analysis.
-    Falls back gracefully when ANTHROPIC_API_KEY is not set.
+    Unified LLM client that routes to Anthropic / OpenAI / Gemini
+    based on the api_key prefix or explicit provider parameter.
     """
 
-    MODEL = "claude-opus-4-6"
-    MAX_TOKENS = 8192
-    MAX_INPUT_CHARS = 80_000  # ~20K tokens — keep well under 200K context
+    # Pricing per 1M tokens (input / output) — NTD at ~32
+    PRICING = {
+        "anthropic": {"input": 5.0, "output": 25.0},   # Claude Opus 4.6
+        "openai":    {"input": 2.5, "output": 10.0},   # GPT-4 Turbo
+        "gemini":    {"input": 0.0, "output": 0.0},    # pay-as-you-go
+    }
 
-    def __init__(self, api_key: Optional[str] = None):
+    MAX_INPUT_CHARS = 80_000
+
+    def __init__(self, api_key: Optional[str] = None, provider: Optional[str] = None):
         self._api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
+        self._provider = provider or _detect_provider(self._api_key)
         self._client = None
         self._last_input_tokens = 0
         self._last_output_tokens = 0
 
     def _get_client(self):
         if self._client is None:
-            if not self._api_key:
+            key = self._api_key
+            if not key:
                 raise ValueError(
-                    "ANTHROPIC_API_KEY 未設定。請在環境變數或 .env 檔案中設定 API Key。"
+                    f"No API key set for provider {self._provider}. "
+                    "Please provide an API key."
                 )
-            try:
-                import anthropic  # type: ignore
-                self._client = anthropic.Anthropic(api_key=self._api_key)
-            except ImportError:
-                raise ImportError(
-                    "anthropic 套件未安裝。請執行: pip install anthropic"
-                )
+            if self._provider == "anthropic":
+                import anthropic
+                self._client = anthropic.Anthropic(api_key=key)
+            elif self._provider == "openai":
+                import openai
+                self._client = openai.OpenAI(api_key=key)
+            elif self._provider == "gemini":
+                import google.generativeai as gemini
+                gemini.configure(api_key=key)
+                self._client = gemini
+            else:
+                raise ValueError(f"Unknown provider: {self._provider}")
         return self._client
 
     def analyze_document(
@@ -119,14 +144,8 @@ class TFDAAnalysisClient:
         requirements_text: str,
         filename: str = "document",
     ) -> dict:
-        """
-        Send document to Claude for gap analysis.
-        Returns parsed JSON dict with analysis results.
-        Raises on API error.
-        """
         client = self._get_client()
 
-        # Truncate if too long
         if len(doc_text) > self.MAX_INPUT_CHARS:
             doc_text = (
                 doc_text[: self.MAX_INPUT_CHARS]
@@ -136,30 +155,66 @@ class TFDAAnalysisClient:
         prompt = _build_analysis_prompt(doc_text, project_type,
                                         requirements_text, filename)
 
-        # Stream the response to avoid timeout on large outputs
+        if self._provider == "anthropic":
+            result_text = self._call_anthropic(client, prompt)
+        elif self._provider == "openai":
+            result_text = self._call_openai(client, prompt)
+        elif self._provider == "gemini":
+            result_text = self._call_gemini(client, prompt)
+        else:
+            raise ValueError(f"Unknown provider: {self._provider}")
+
+        return self._parse_json_response(result_text)
+
+    def _call_anthropic(self, client, prompt: str) -> str:
         result_text = ""
         with client.messages.stream(
-            model=self.MODEL,
-            max_tokens=self.MAX_TOKENS,
+            model="claude-opus-4-6",
+            max_tokens=8192,
             thinking={"type": "adaptive"},
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         ) as stream:
             for text in stream.text_stream:
                 result_text += text
-
             final = stream.get_final_message()
             self._last_input_tokens = final.usage.input_tokens
             self._last_output_tokens = final.usage.output_tokens
+        return result_text
 
-        return self._parse_json_response(result_text)
+    def _call_openai(self, client, prompt: str) -> str:
+        response = client.chat.completions.create(
+            model="gpt-4-turbo",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=8192,
+            temperature=0,
+        )
+        msg = response.choices[0].message
+        self._last_input_tokens = response.usage.prompt_tokens
+        self._last_output_tokens = response.usage.completion_tokens
+        return msg.content or ""
+
+    def _call_gemini(self, client, prompt: str) -> str:
+        model = client.get_model("gemini-2.0-flash")
+        response = client.generate_text(
+            model=model,
+            prompt=prompt,
+            temperature=0,
+            max_output_tokens=8192,
+        )
+        # Gemini returns text directly
+        self._last_input_tokens = 0  # not exposed
+        self._last_output_tokens = 0
+        return response.result or ""
 
     def estimate_cost_ntd(self) -> float:
-        """Estimate cost in NTD for the last analysis (Opus 4.6 pricing)."""
-        input_cost_usd = self._last_input_tokens / 1_000_000 * 5.0
-        output_cost_usd = self._last_output_tokens / 1_000_000 * 25.0
-        total_usd = input_cost_usd + output_cost_usd
-        return round(total_usd * 32, 2)  # ~32 NTD/USD
+        pricing = self.PRICING.get(self._provider, {"input": 0, "output": 0})
+        input_cost = self._last_input_tokens / 1_000_000 * pricing["input"]
+        output_cost = self._last_output_tokens / 1_000_000 * pricing["output"]
+        return round((input_cost + output_cost) * 32, 2)
 
     @property
     def last_token_usage(self) -> dict:
@@ -172,9 +227,7 @@ class TFDAAnalysisClient:
 
     @staticmethod
     def _parse_json_response(text: str) -> dict:
-        """Extract JSON from Claude's response (may be wrapped in code fences)."""
         text = text.strip()
-        # Strip markdown code fences if present
         if "```json" in text:
             start = text.find("```json") + 7
             end = text.rfind("```")
@@ -183,11 +236,9 @@ class TFDAAnalysisClient:
             start = text.find("```") + 3
             end = text.rfind("```")
             text = text[start:end].strip()
-
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            # Return a minimal error structure
             return {
                 "document_type": "unknown",
                 "completeness_score": 0,
@@ -197,3 +248,7 @@ class TFDAAnalysisClient:
                 "action_items": ["請重新分析"],
                 "_parse_error": True,
             }
+
+
+# Backwards compatibility alias
+TFDAAnalysisClient = MultiProviderLLMClient

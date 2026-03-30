@@ -148,9 +148,9 @@ class GapAnalyzer:
 
     _SCHEMA_PATH = Path(__file__).parent.parent / "config" / "regulatory_schemas.yaml"
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, provider: Optional[str] = None):
         self._parser = DocumentParser()
-        self._llm = TFDAAnalysisClient(api_key=api_key)
+        self._llm = TFDAAnalysisClient(api_key=api_key, provider=provider)
         self._vector_store = RegulationVectorStore()
         self._schemas: dict = {}
         self._load_schemas()

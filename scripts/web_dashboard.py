@@ -6,6 +6,7 @@ Interactive dashboard for monitoring regulatory project status
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 from datetime import datetime, date
@@ -918,7 +919,6 @@ def build_progress_chart(report: Dict, dark: bool = False) -> go.Figure:
         ],
         showlegend=True,
         height=240,
-        legend=dict(orientation="h", y=-0.08, x=0.5, xanchor="center"),
     )
     return fig
 
@@ -944,7 +944,6 @@ def build_status_bar(items: List[Dict], dark: bool = False) -> go.Figure:
         **plotly_layout(dark),
         height=240,
         bargap=0.35,
-        yaxis=dict(showgrid=True, zeroline=False, tick0=0, dtick=1),
     )
     return fig
 
@@ -970,7 +969,6 @@ def build_risk_chart(items: List[Dict], dark: bool = False) -> go.Figure:
         **plotly_layout(dark),
         height=240,
         bargap=0.4,
-        yaxis=dict(showgrid=True, zeroline=False, tick0=0, dtick=1),
     )
     return fig
 
@@ -1439,14 +1437,49 @@ def render_ai_analysis_page(dark: bool = False):
         schema_key_map = {v: k for k, v in SCHEMA_TYPE_MAP.items()}
         schema_key = schema_key_map.get(schema_display, "drug_registration_extension")
 
-    api_key_input = st.text_input(
-        "Anthropic API Key（可選，優先使用環境變數 ANTHROPIC_API_KEY）",
-        type="password",
-        placeholder="sk-ant-...",
-        help="若已設定環境變數，可留空",
-    )
-
     st.markdown("</div>", unsafe_allow_html=True)
+
+    # ── Model provider & API key ──────────────────────────────────────────────────────────────────────
+    MODEL_OPTIONS = {
+        "Anthropic (Claude)": "anthropic",
+        "OpenAI (GPT)":      "openai",
+        "Google (Gemini)":   "gemini",
+        "Ollama (Local)":    "ollama",
+        "OpenRouter":         "openrouter",
+    }
+    selected_provider = st.selectbox(
+        "AI 模型供應商",
+        options=list(MODEL_OPTIONS.keys()),
+        index=0,
+        help="選據要使用的 AI 模型供應商",
+    )
+    provider_key = MODEL_OPTIONS[selected_provider]
+    env_var_map = {
+        "anthropic":  "ANTHROPIC_API_KEY",
+        "openai":     "OPENAI_API_KEY",
+        "gemini":     "GEMINI_API_KEY",
+        "ollama":     "OLLAMA_BASE_URL",
+        "openrouter": "OPENROUTER_API_KEY",
+    }
+    placeholder_map = {
+        "anthropic":  "sk-ant-...",
+        "openai":     "sk-...",
+        "gemini":     "AI...",
+        "ollama":     "http://localhost:11434",
+        "openrouter": "sk-or-...",
+    }
+    env_var = env_var_map[provider_key]
+    current_env = st.session_state.get("_ai_env_keys", {}).get(provider_key, os.getenv(env_var, ""))
+    api_key_input = st.text_input(
+        f"API Key（環境變數 {env_var} = 已設定）",
+        value=current_env,
+        type="password",
+        placeholder=placeholder_map[provider_key],
+        help=f"直接填入或設定環境變數 {env_var}",
+    )
+    if "_ai_env_keys" not in st.session_state:
+        st.session_state._ai_env_keys = {}
+    st.session_state._ai_env_keys[provider_key] = api_key_input
 
     # ── Analysis trigger ───────────────────────────────────────────────────
     can_analyze = uploaded_file is not None and not st.session_state.ai_running
@@ -1457,7 +1490,7 @@ def render_ai_analysis_page(dark: bool = False):
 
         with st.spinner("正在分析文件… 這可能需要 30–90 秒，請稍候。"):
             try:
-                analyzer = GapAnalyzer(api_key=api_key_input or None)
+                analyzer = GapAnalyzer(api_key=api_key_input or None, provider=provider_key)
                 file_bytes = uploaded_file.read()
                 report = analyzer.analyze(
                     file_bytes=file_bytes,
@@ -1850,18 +1883,11 @@ def main():
         """
         st.markdown(kpi_html, unsafe_allow_html=True)
 
-        # Progress bars
-        st.markdown(f"""
-        <div class="section-card">
-            <div class="section-title">
-                <div class="title-icon">📊</div> Progress Overview
-            </div>
-            {prog_bar(comp_pct, "Document Completion")}
-            <div style="margin-top: 14px">
-            {prog_bar(deadline_pct, "Timeline Elapsed", warn_threshold=75.0)}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown("**Progress Overview**")
+        st.caption(f"Document Completion: {comp_pct:.1f}%")
+        st.progress(comp_pct / 100.0)
+        st.caption(f"Timeline Elapsed: {deadline_pct:.1f}%")
+        st.progress(deadline_pct / 100.0)
 
         # Charts row
         c1, c2, c3 = st.columns(3)
@@ -2174,14 +2200,10 @@ def main():
                 comp = p.get("completion", 0)
                 window = 180
                 elapsed = max(0.0, min(100.0, (window - days) / window * 100))
-                st.markdown(f"""
-                <div style="margin-bottom:16px">
-                    <div style="font-size:0.85rem;font-weight:600;color:{'#f1f5f9' if dark else '#1e293b'};
-                                margin-bottom:6px">{p['name'].upper()}</div>
-                    {prog_bar(comp, "Completion")}
-                    <div style="margin-top:8px">{prog_bar(elapsed, "Timeline Elapsed", warn_threshold=75.0)}</div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.caption(f"{p['name'].upper()} - Completion: {comp:.1f}%")
+                st.progress(comp / 100.0)
+                st.caption(f"Timeline Elapsed: {elapsed:.1f}%")
+                st.progress(elapsed / 100.0)
             st.markdown('</div>', unsafe_allow_html=True)
 
     # ── VIEW: COMPARISON ──────────────────────────────────────────────────

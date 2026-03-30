@@ -100,6 +100,10 @@ def register_company_and_admin(
         db.refresh(company)
         db.refresh(user)
 
+        # Detach from session before returning so caller can use objects outside the context
+        db.expunge(company)
+        db.expunge(user)
+
         return company, user
 
 
