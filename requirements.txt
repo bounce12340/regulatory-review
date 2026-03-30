@@ -26,6 +26,7 @@ urllib3==2.2.1
 sqlalchemy==2.0.29
 psycopg2-binary==2.9.9
 supabase==2.4.0
+greenlet==3.1.1
 
 # Authentication
 PyJWT==2.8.0
@@ -34,9 +35,6 @@ bcrypt==4.1.2
 # AI / LLM Integration (Phase 4)
 anthropic>=0.40.0
 openai==1.14.0
-chromadb==0.4.24
-langchain==0.1.13
-langchain-community==0.0.29
 tiktoken==0.6.0
 
 # Document parsing
