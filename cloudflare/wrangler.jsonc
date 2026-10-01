@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "regulatory-review",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  // Static front-end (public/) is served directly; only /api/* runs the Worker.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // No database_id needed: on first `wrangler deploy`, Wrangler auto-provisions a D1
+  // database with this name (and later commands look it up by name). To use an existing
+  // database instead, add its "database_id" here.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "regulatory-review",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Non-secret settings. Secrets (ANTHROPIC_API_KEY) are set with
+  //   npx wrangler secret put ANTHROPIC_API_KEY
+  "vars": {
+    "AI_MODEL": "claude-opus-5-5",
+    "AI_EFFORT": "high",
+    "USD_TO_TWD": "32",
+    "ALLOW_REGISTRATION": "true",
+    "SESSION_TTL_HOURS": "168",
+    // 100000 ≈ 45 ms CPU per login. Workers Free allows 10 ms/request, so on the Free
+    // plan set 10000 (weaker hashing); on Workers Paid keep 100000. See README.
+    "PBKDF2_ITERATIONS": "100000"
+  }
+}

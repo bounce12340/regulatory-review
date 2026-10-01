@@ -5,6 +5,8 @@ Regulatory Document Review System
 Automated checklist for TFDA submissions
 """
 
+from __future__ import annotations  # keeps `-> Text` hints valid when rich is not installed
+
 import io
 import json
 import sys
