@@ -25,6 +25,11 @@
 
 > 專為台灣 FDA (TFDA) 藥品與食品註冊申請設計的自動化文件審查系統
 
+### ☁️ Cloudflare 網站版（v4）
+
+可直接部署到 Cloudflare 的網站版本在 [`cloudflare/`](cloudflare/README.md)，使用 Workers + D1 + Claude AI，部署步驟見該目錄 README。
+原 Streamlit 版的檢查結果與已知問題整理在 [`SYSTEM_REVIEW.md`](SYSTEM_REVIEW.md)。
+
 ### ✨ 功能特色
 
 | 功能 | 說明 |
@@ -80,6 +85,8 @@ streamlit run launcher.py
 ## 🇺🇸 English
 
 > Automated document review system designed for Taiwan FDA (TFDA) drug & food registration applications
+
+**Cloudflare edition (v4):** a deployable web version (Workers + D1 + Claude) lives in [`cloudflare/`](cloudflare/README.md). A review of the original Streamlit app is in [`SYSTEM_REVIEW.md`](SYSTEM_REVIEW.md).
 
 ### ✨ Features
 
