@@ -61,9 +61,9 @@ export const STATUS_COLOR = {
 export const RISK_LABEL = { low: "低", medium: "中", high: "高" };
 export const RISK_COLOR = { low: "#10b981", medium: "#f59e0b", high: "#ef4444" };
 export const OVERALL_LABEL = {
-  ready_for_submission: "可送件",
+  ready_for_submission: "可以送件",
   in_progress: "接近完成",
-  needs_attention: "待加強",
+  needs_attention: "尚待補齊",
 };
 export const OVERALL_CLASS = { ready_for_submission: "b-ok", in_progress: "b-info", needs_attention: "b-danger" };
 export const PROJECT_STATUS_LABEL = { active: "進行中", archived: "已封存", completed: "已結案" };

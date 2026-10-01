@@ -10,13 +10,13 @@ import { renderUsers, renderAccount } from "./views/admin.js";
 const app = document.getElementById("app");
 
 const NAV = [
-  { route: "overview", icon: "📋", label: "專案總覽", render: renderOverview },
-  { route: "timeline", icon: "📅", label: "時程與截止日", render: renderTimeline },
-  { route: "compare", icon: "📊", label: "多專案比較", render: renderCompare },
-  { route: "projects", icon: "📁", label: "專案管理", render: renderProjects },
-  { route: "ai", icon: "🤖", label: "AI 文件分析", render: renderAi },
-  { route: "users", icon: "👥", label: "使用者管理", render: renderUsers, admin: true },
-  { route: "account", icon: "🔑", label: "帳號設定", render: renderAccount, hidden: true },
+  { route: "overview", label: "案件總覽", render: renderOverview },
+  { route: "timeline", label: "時程與截止日", render: renderTimeline },
+  { route: "compare", label: "案件比較", render: renderCompare },
+  { route: "projects", label: "案件管理", render: renderProjects },
+  { route: "ai", label: "AI 文件分析", render: renderAi },
+  { route: "users", label: "使用者管理", render: renderUsers, admin: true },
+  { route: "account", label: "帳號設定", render: renderAccount, hidden: true },
 ];
 
 function parseRoute() {
@@ -48,6 +48,7 @@ function toggleTheme() {
 
 function renderAuth(mode = "login") {
   const registration = state.config?.registration_enabled;
+  const register = mode === "register" && registration;
   const error = h("div", { class: "error-text", role: "alert" });
 
   const loginForm = h("form", {
@@ -56,15 +57,15 @@ function renderAuth(mode = "login") {
       error.textContent = "";
       const data = formData(e.target);
       try {
-        await busy(e.submitter, () => api("POST", "/api/auth/login", data), "登入中…");
+        await busy(e.submitter, () => api("POST", "/api/auth/login", data), "登入中");
         await boot();
       } catch (err) {
         error.textContent = err.message;
       }
     },
   },
-    field("電子郵件 Email", h("input", { class: "input", name: "email", type: "email", autocomplete: "username", required: true, placeholder: "you@company.com" })),
-    field("密碼 Password", h("input", { class: "input", name: "password", type: "password", autocomplete: "current-password", required: true })),
+    field("電子郵件", h("input", { class: "input", name: "email", type: "email", autocomplete: "username", required: true })),
+    field("密碼", h("input", { class: "input", name: "password", type: "password", autocomplete: "current-password", required: true })),
     error,
     h("button", { class: "btn btn-primary btn-block", type: "submit" }, "登入"),
   );
@@ -74,41 +75,52 @@ function renderAuth(mode = "login") {
       e.preventDefault();
       error.textContent = "";
       const data = formData(e.target);
-      if (data.password !== data.password2) { error.textContent = "兩次密碼輸入不一致。"; return; }
+      if (data.password !== data.password2) { error.textContent = "兩次輸入的密碼不一致。"; return; }
       delete data.password2;
       try {
-        await busy(e.submitter, () => api("POST", "/api/auth/register", data), "建立中…");
+        await busy(e.submitter, () => api("POST", "/api/auth/register", data), "建立中");
         await boot();
-        toast("帳號建立成功，歡迎使用！");
+        toast("已建立公司帳號");
       } catch (err) {
         error.textContent = err.message;
       }
     },
   },
-    h("p", { class: "help", style: "margin-top:0" }, "建立新公司帳號（第一位使用者自動成為管理員）"),
-    field("公司名稱 Company", h("input", { class: "input", name: "company_name", required: true, maxlength: 200 })),
-    field("姓名 Full name", h("input", { class: "input", name: "full_name", required: true, maxlength: 200, autocomplete: "name" })),
-    field("電子郵件 Email", h("input", { class: "input", name: "email", type: "email", required: true, autocomplete: "email" })),
-    field("密碼（至少 8 字元）", h("input", { class: "input", name: "password", type: "password", required: true, minlength: 8, autocomplete: "new-password" })),
-    field("確認密碼", h("input", { class: "input", name: "password2", type: "password", required: true, minlength: 8, autocomplete: "new-password" })),
+    field("公司名稱", h("input", { class: "input", name: "company_name", required: true, maxlength: 200, autocomplete: "organization" })),
+    field("你的姓名", h("input", { class: "input", name: "full_name", required: true, maxlength: 200, autocomplete: "name" })),
+    field("電子郵件", h("input", { class: "input", name: "email", type: "email", required: true, autocomplete: "email" })),
+    field("密碼（至少 8 個字元）", h("input", { class: "input", name: "password", type: "password", required: true, minlength: 8, autocomplete: "new-password" })),
+    field("再輸入一次密碼", h("input", { class: "input", name: "password2", type: "password", required: true, minlength: 8, autocomplete: "new-password" })),
     error,
-    h("button", { class: "btn btn-primary btn-block", type: "submit" }, "建立帳號"),
+    h("button", { class: "btn btn-primary btn-block", type: "submit" }, "建立公司帳號"),
   );
 
-  const tab = (id, label) => h("button", {
-    type: "button", role: "tab", "aria-selected": String(mode === id),
-    onclick: () => renderAuth(id),
-  }, label);
+  const sample = [
+    ["換發新證申請書", "已完成", "ok"],
+    ["藥典／廠規檢驗規格變更備查", "審查中", "rv"],
+    ["原料藥製造廠 GMP 證明文件", "受阻", "bk"],
+  ];
 
-  mount(app, h("div", { class: "auth-wrap" },
-    h("div", { class: "card auth-card" },
-      h("div", { class: "auth-head" },
-        h("div", { class: "brand-icon" }, "⚕"),
-        h("h1", { style: "font-size:1.5rem" }, "RegReview"),
-        h("p", { class: "muted small", style: "margin:4px 0 0" }, "法規審查管理系統 · TFDA Regulatory Review"),
+  mount(app, h("div", { class: "auth" },
+    h("section", { class: "auth-cover" },
+      h("div", { class: "seal-mark", "aria-hidden": "true" }, "審"),
+      h("div", {},
+        h("h1", {}, "TFDA 查驗登記文件，", h("br"), "一份一份追到可以送件。"),
+        h("p", { style: "margin-top:14px" }, "依申請類型帶入文件清單，追蹤每份文件的狀態、風險與截止日；送件前也能先讓 AI 比對缺口。"),
       ),
-      registration ? h("div", { class: "tabs", role: "tablist" }, tab("login", "登入"), tab("register", "註冊")) : null,
-      mode === "register" && registration ? registerForm : loginForm,
+      h("div", { class: "auth-sample", "aria-hidden": "true" },
+        sample.map(([name, status, cls]) => h("div", { class: "row" }, h("span", {}, name), h("span", { class: cls }, status)))),
+    ),
+    h("section", { class: "auth-form" },
+      h("div", { class: "inner" },
+        h("h2", {}, register ? "建立公司帳號" : "登入 RegReview"),
+        h("p", { class: "lead" }, register ? "第一位註冊的人會成為公司的管理員，之後可以邀請同事。" : "使用公司帳號登入。"),
+        register ? registerForm : loginForm,
+        registration ? h("p", { class: "auth-switch" },
+          register ? "已經有帳號？" : "公司還沒有帳號？",
+          h("button", { class: "link-btn", type: "button", onclick: () => renderAuth(register ? "login" : "register") },
+            register ? "改為登入" : "建立公司帳號")) : null,
+      ),
     ),
   ));
 }
@@ -120,51 +132,46 @@ function renderShell(active) {
   const closeNav = () => shell.classList.remove("nav-open");
 
   const projectSelect = h("select", {
-    "aria-label": "目前專案",
+    id: "case-switch",
     onchange: (e) => {
       state.currentProjectId = Number(e.target.value);
       navigate(`#/overview/${state.currentProjectId}`);
     },
   }, state.projects.length
     ? state.projects.map((p) => h("option", { value: p.id, selected: p.id === state.currentProjectId }, p.name))
-    : h("option", { value: "" }, "（尚無專案）"));
+    : h("option", { value: "" }, "尚無案件"));
 
   const sidebar = h("aside", { class: "sidebar", "aria-label": "主選單" },
-    h("div", { class: "brand" },
-      h("div", { class: "brand-icon" }, "⚕"),
-      h("div", {}, h("div", { class: "brand-name" }, "RegReview"), h("div", { class: "brand-sub" }, "Regulatory Dashboard")),
+    h("a", { class: "brand", href: state.currentProjectId ? `#/overview/${state.currentProjectId}` : "#/overview", onclick: closeNav },
+      h("div", { class: "seal-mark", "aria-hidden": "true" }, "審"),
+      h("div", {}, h("div", { class: "brand-name" }, "RegReview"), h("div", { class: "brand-sub" }, "法規審查管理")),
     ),
-    h("div", {},
-      h("div", { class: "nav-label" }, "Navigation"),
-      h("nav", { class: "nav" },
-        NAV.filter((n) => !n.hidden && (!n.admin || isAdmin())).map((n) =>
-          h("a", {
-            href: n.route === "overview" && state.currentProjectId ? `#/overview/${state.currentProjectId}` : `#/${n.route}`,
-            "aria-current": n.route === active ? "page" : null,
-            onclick: closeNav,
-          }, h("span", { "aria-hidden": "true" }, n.icon), n.label)),
-      ),
+    h("nav", { class: "nav" },
+      NAV.filter((n) => !n.hidden && (!n.admin || isAdmin())).map((n) =>
+        h("a", {
+          href: n.route === "overview" && state.currentProjectId ? `#/overview/${state.currentProjectId}` : `#/${n.route}`,
+          "aria-current": n.route === active ? "page" : null,
+          onclick: closeNav,
+        }, n.label)),
     ),
-    h("div", {}, h("div", { class: "nav-label" }, "Project"), projectSelect),
+    h("div", { class: "side-block" }, h("label", { class: "side-label", for: "case-switch" }, "目前案件"), projectSelect),
     h("div", { class: "sidebar-foot" },
-      h("button", { class: "btn btn-ghost btn-sm", onclick: toggleTheme }, currentTheme() === "dark" ? "☀️ 淺色模式" : "🌙 深色模式"),
       h("div", {},
-        h("b", {}, state.user.full_name), h("br"),
-        state.user.email, h("br"),
-        h("span", { class: "small" }, `${state.user.company_name} · ${ROLE_LABEL[state.user.role]}`),
+        h("strong", {}, state.user.full_name),
+        state.user.company_name, `（${ROLE_LABEL[state.user.role]}）`),
+      h("div", { class: "link-row" },
+        h("a", { href: "#/account", onclick: closeNav, class: "small" }, "帳號設定"),
+        h("button", { class: "link-btn", onclick: toggleTheme }, currentTheme() === "dark" ? "淺色模式" : "深色模式"),
+        h("button", { class: "link-btn", onclick: logout }, "登出"),
       ),
-      h("div", { class: "btn-row" },
-        h("a", { class: "btn btn-ghost btn-sm", href: "#/account", onclick: closeNav }, "帳號設定"),
-        h("button", { class: "btn btn-ghost btn-sm", onclick: logout }, "登出"),
-      ),
-      h("div", { class: "small", style: "opacity:.6" }, `v4.0 · ${state.today ?? ""}`),
     ),
   );
 
-  const main = h("main", { class: "main", id: "main" });
+  const main = h("main", { class: "main", id: "main", tabindex: "-1" });
   const topbar = h("div", { class: "topbar" },
-    h("button", { "aria-label": "開啟選單", onclick: () => shell.classList.toggle("nav-open") }, "☰"),
-    h("b", {}, "RegReview"),
+    h("button", { class: "menu-btn", "aria-label": "開啟選單", onclick: () => shell.classList.toggle("nav-open") }, "選單"),
+    h("div", { class: "seal-mark", "aria-hidden": "true" }, "審"),
+    h("b", { style: "font-family:var(--kai)" }, "RegReview"),
   );
   shell.addEventListener("click", (e) => { if (e.target === shell) closeNav(); });
   mount(shell, sidebar, h("div", {}, topbar, main));
@@ -192,9 +199,9 @@ async function render() {
     await entry.render(main, params, { navigate, rerender: render, isCurrent: () => seq === renderSeq });
   } catch (err) {
     if (seq !== renderSeq) return;
-    mount(main, h("div", { class: "notice error" }, `載入失敗：${err.message}`));
+    mount(main, h("div", { class: "notice error" }, `無法載入這個頁面：${err.message}`));
   }
-  main.focus?.();
+  if (document.activeElement === document.body) main.focus({ preventScroll: true });
 }
 
 async function boot() {

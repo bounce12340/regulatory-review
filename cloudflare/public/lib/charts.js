@@ -1,73 +1,107 @@
-// Dependency-free SVG/CSS charts replacing the Plotly figures of the Streamlit dashboard.
-import { h, svg } from "./dom.js";
+// Dependency-free visual primitives: document strip, meters, seal, Gantt timeline.
+import { h } from "./dom.js";
+import { STATUS_LABEL, OVERALL_LABEL, daysBetween } from "./api.js";
 
-export function donut(percent, label = "完成度") {
-  const r = 52;
-  const c = 2 * Math.PI * r;
-  const pct = Math.max(0, Math.min(100, percent));
-  return svg("svg", { class: "chart", viewBox: "0 0 140 140", role: "img", "aria-label": `${label} ${pct.toFixed(1)}%`, style: "max-width:200px;margin:0 auto" },
-    svg("circle", { cx: 70, cy: 70, r, fill: "none", stroke: "var(--surface-2)", "stroke-width": 14 }),
-    svg("circle", {
-      cx: 70, cy: 70, r, fill: "none", stroke: "var(--accent)", "stroke-width": 14, "stroke-linecap": "round",
-      "stroke-dasharray": `${(c * pct) / 100} ${c}`, transform: "rotate(-90 70 70)",
-    }),
-    svg("text", { x: 70, y: 72, "text-anchor": "middle", class: "label-strong", style: "font-size:24px" }, `${Math.round(pct)}%`),
-    svg("text", { x: 70, y: 92, "text-anchor": "middle" }, label),
+const STATUS_ORDER = ["completed", "under_review", "in_progress", "blocked", "pending"];
+
+/** One block per checklist item, in checklist order, coloured by status. */
+export function docStrip(items, { mini = false } = {}) {
+  return h("div", {
+    class: `strip${mini ? " mini" : ""}`,
+    role: "img",
+    "aria-label": `文件狀態：${STATUS_ORDER.map((s) => `${STATUS_LABEL[s]} ${items.filter((i) => i.status === s).length}`).join("，")}`,
+  }, items.map((i) => h("span", { class: `s-${i.status}`, title: i.item_name ? `${i.item_name}：${STATUS_LABEL[i.status]}` : STATUS_LABEL[i.status] })));
+}
+
+/** Strip built from counts only (portfolio views don't load every item). */
+export function countStrip(counts, opts) {
+  const items = STATUS_ORDER.flatMap((s) => Array.from({ length: counts[s] ?? 0 }, () => ({ status: s })));
+  return docStrip(items, opts);
+}
+
+export function stripLegend(counts) {
+  return h("div", { class: "strip-legend" },
+    STATUS_ORDER.filter((s) => counts[s]).map((s) =>
+      h("span", { class: `s-${s}` }, h("i"), STATUS_LABEL[s], h("b", {}, counts[s]))));
+}
+
+export function meter(label, pct, { warn = false } = {}) {
+  const value = pct === null || pct === undefined ? null : Math.max(0, Math.min(100, pct));
+  return h("div", { class: "meter" },
+    h("div", { class: "meter-label" }, h("span", {}, label), h("b", {}, value === null ? "—" : `${value.toFixed(0)}%`)),
+    h("div", { class: "meter-track", role: "progressbar", "aria-label": label, "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": Math.round(value ?? 0) },
+      h("div", { class: `meter-fill${warn ? " warn" : ""}`, style: `width:${value ?? 0}%` })));
+}
+
+/** The case status stamp. */
+export function seal(overall) {
+  // Four characters, read like a real seal: vertical columns, right to left.
+  return h("div", { class: `seal ${overall}`, role: "img", "aria-label": `整體狀態：${OVERALL_LABEL[overall]}` },
+    h("div", { class: "seal-text", "aria-hidden": "true" }, OVERALL_LABEL[overall] ?? ""));
+}
+
+/**
+ * Gantt: each project is a bar from creation to deadline, filled by completion,
+ * with a "today" line across all rows.
+ */
+export function gantt(projects, today) {
+  const rows = projects.filter((p) => p.deadline);
+  if (!rows.length) return h("p", { class: "muted" }, "目前的專案都沒有設定截止日。");
+  const starts = rows.map((p) => p.created_at.slice(0, 10));
+  let min = [...starts, today].sort()[0];
+  let max = [...rows.map((p) => p.deadline), today].sort().at(-1);
+  // Pad the range a little so bars don't touch the edges.
+  const span = Math.max(14, daysBetween(min, max));
+  min = shift(min, -Math.round(span * 0.04));
+  max = shift(max, Math.round(span * 0.12));
+  const total = daysBetween(min, max);
+  const pos = (iso) => (daysBetween(min, iso) / total) * 100;
+
+  return h("div", { class: "gantt" },
+    h("div", { class: "gantt-axis", "aria-hidden": "true" },
+      monthTicks(min, max).map((m) => h("span", { style: `left:${pos(m)}%` }, `${Number(m.slice(5, 7))} 月`))),
+    h("div", { class: "gantt-body", style: `--x:${pos(today) / 100}` },
+      h("div", { class: "gantt-today", "aria-hidden": "true" }, h("span", {}, `今天 ${today.slice(5).replace("-", "/")}`)),
+      rows.map((p) => {
+        const start = p.created_at.slice(0, 10);
+        const left = pos(start);
+        const width = Math.max(0.5, pos(p.deadline) - left);
+        const days = p.summary.days_left;
+        const late = days < 0 || (days < 30 && p.summary.completion_rate < 100);
+        // Deadline label hangs under the bar's end; right-aligned unless the bar is short and near the start.
+        const flip = left + width > 40;
+        return h("div", { class: "gantt-row" },
+          h("div", { class: "gantt-label" },
+            h("a", { href: `#/overview/${p.id}` }, p.name),
+            h("div", {}, p.schema_name)),
+          h("div", { class: "gantt-track" },
+            h("div", {
+              class: `gantt-bar${late ? " late" : ""}`, style: `left:${left}%;width:${width}%`,
+              role: "img", "aria-label": `${p.name}：完成 ${p.summary.completion_rate}%，截止 ${p.deadline}`,
+            }, h("div", { class: "done", style: `width:${p.summary.completion_rate}%` })),
+            h("div", { class: `gantt-end${days < 30 ? " alert" : ""}${flip ? " flip" : ""}`, style: `left:${left + width}%` },
+              h("b", {}, days < 0 ? `逾期 ${-days} 天` : `剩 ${days} 天`), `　截止 ${p.deadline}`)),
+        );
+      }),
+    ),
   );
 }
 
-/** Horizontal bars: rows = [{ label, value, color }] */
-export function hbars(rows) {
-  const max = Math.max(1, ...rows.map((r) => r.value));
-  return h("div", { class: "hbars" },
-    rows.map((r) => h("div", { class: "hbar" },
-      h("span", {}, r.label),
-      h("div", { class: "hbar-track" },
-        h("div", { class: "hbar-fill", style: `width:${(r.value / max) * 100}%;background:${r.color}` })),
-      h("b", {}, r.value),
-    )),
-  );
+function shift(iso, days) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
-export function progress(label, pct, { invert = false } = {}) {
-  const value = Math.max(0, Math.min(100, pct ?? 0));
-  // For "time elapsed" a high value is bad, for completion it's good.
-  const good = invert ? value < 50 : value >= 70;
-  const bad = invert ? value >= 80 : value < 30;
-  return h("div", { class: "progress" },
-    h("div", { class: "progress-label" }, h("span", {}, label), h("span", {}, pct === null ? "—" : `${value.toFixed(1)}%`)),
-    h("div", { class: "progress-track", role: "progressbar", "aria-valuenow": Math.round(value), "aria-valuemin": 0, "aria-valuemax": 100, "aria-label": label },
-      h("div", { class: `progress-fill ${good ? "ok" : bad ? "warn" : "mid"}`, style: `width:${value}%` })),
-  );
-}
-
-/** Radar chart for the multi-project view. series = [{ name, values: [0..100, ...] }] */
-export function radar(axes, series) {
-  const size = 300, cx = 150, cy = 150, R = 105;
-  const palette = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ef4444", "#06b6d4"];
-  const point = (i, v) => {
-    const a = (Math.PI * 2 * i) / axes.length - Math.PI / 2;
-    return [cx + Math.cos(a) * R * (v / 100), cy + Math.sin(a) * R * (v / 100)];
-  };
-  const rings = [25, 50, 75, 100].map((v) =>
-    svg("polygon", { points: axes.map((_, i) => point(i, v).join(",")).join(" "), fill: "none", class: "grid-line" }));
-  const spokes = axes.map((a, i) => {
-    const [x, y] = point(i, 100);
-    const [lx, ly] = point(i, 122);
-    return [
-      svg("line", { x1: cx, y1: cy, x2: x, y2: y, class: "grid-line" }),
-      svg("text", { x: lx, y: ly + 4, "text-anchor": "middle" }, a),
-    ];
-  });
-  const shapes = series.map((s, idx) => svg("polygon", {
-    points: s.values.map((v, i) => point(i, v).join(",")).join(" "),
-    fill: palette[idx % palette.length], "fill-opacity": 0.18,
-    stroke: palette[idx % palette.length], "stroke-width": 2,
-  }));
-  return h("div", {},
-    svg("svg", { class: "chart", viewBox: `0 0 ${size} ${size}`, role: "img", "aria-label": "專案健康雷達圖", style: "max-width:340px;margin:0 auto" },
-      rings, spokes, shapes),
-    h("div", { class: "legend", style: "justify-content:center" },
-      series.map((s, idx) => h("span", {}, h("i", { style: `background:${palette[idx % palette.length]}` }), s.name))),
-  );
+function monthTicks(min, max) {
+  const out = [];
+  const d = new Date(`${min.slice(0, 7)}-01T00:00:00Z`);
+  d.setUTCMonth(d.getUTCMonth() + 1);
+  const months = Math.max(1, daysBetween(min, max) / 30);
+  const step = months > 14 ? 3 : months > 7 ? 2 : 1;
+  while (d.toISOString().slice(0, 10) < max) {
+    out.push(d.toISOString().slice(0, 10));
+    d.setUTCMonth(d.getUTCMonth() + step);
+  }
+  return out;
 }

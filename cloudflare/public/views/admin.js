@@ -17,41 +17,40 @@ export async function renderUsers(main, _params, ctx) {
   };
 
   mount(main,
-    h("header", { class: "page-header" },
-      h("div", {}, h("span", { class: "eyebrow" }, "👥 Users"), h("h1", {}, "使用者管理"),
-        h("p", { class: "page-sub" }, `${state.user.company_name} 的成員與權限`))),
-    h("section", { class: "card" },
-      h("div", { class: "card-title" }, `成員（${users.length}）`),
-      h("p", { class: "help", style: "margin-top:-8px" }, "管理員：全部權限｜成員：編輯專案與執行 AI 分析｜檢視者：唯讀"),
+    h("header", { class: "page-head" },
+      h("h1", {}, "使用者管理"),
+      h("p", {}, `${state.user.company_name} 的成員與權限。管理員可管理所有設定；成員可編輯案件與執行 AI 分析；檢視者只能瀏覽。`)),
+    h("section", { class: "sheet" },
+      h("h2", { class: "sheet-title" }, "成員", h("span", { class: "aside" }, `${users.length} 位`)),
       h("div", { class: "table-wrap" }, h("table", {},
         h("thead", {}, h("tr", {}, ["姓名", "Email", "角色", "狀態", "最後登入"].map((t) => h("th", {}, t)))),
         h("tbody", {}, users.map((u) => {
           const self = u.id === state.user.id;
           return h("tr", {},
-            h("td", { class: "item-name" }, u.full_name, self ? h("span", { class: "muted small" }, "（你）") : null),
+            h("td", { class: "item-name" }, u.full_name, self ? h("span", { class: "muted small", style: "font-weight:400" }, "（你）") : null),
             h("td", {}, u.email),
             h("td", {}, self
               ? ROLE_LABEL[u.role]
               : h("select", { class: "input", "aria-label": `${u.full_name} 角色`, onchange: (e) => update(u, { role: e.target.value }) },
                 ROLES.map((r) => h("option", { value: r, selected: u.role === r }, ROLE_LABEL[r])))),
             h("td", {}, self
-              ? h("span", { class: "badge b-ok" }, "啟用")
+              ? "啟用中"
               : h("label", { class: "check" },
                 h("input", { type: "checkbox", checked: u.is_active, onchange: (e) => update(u, { is_active: e.target.checked }) }),
-                u.is_active ? "啟用" : "停用")),
+                u.is_active ? "啟用中" : "已停用")),
             h("td", { class: "small muted" }, u.last_login ? u.last_login.slice(0, 16).replace("T", " ") : "—"),
           );
         })),
       )),
     ),
-    h("section", { class: "card" },
-      h("div", { class: "card-title" }, "➕ 新增成員"),
+    h("section", { class: "sheet" },
+      h("h2", { class: "sheet-title" }, "新增成員"),
       h("form", {
         onsubmit: async (e) => {
           e.preventDefault();
           try {
             await busy(e.submitter, () => api("POST", "/api/users", formData(e.target)));
-            toast("已新增成員，請將初始密碼以安全管道告知對方");
+            toast("已新增成員。請用安全的方式把初始密碼告訴對方。");
             ctx.rerender();
           } catch (err) { toast(err.message, "error"); }
         },
@@ -71,11 +70,11 @@ export async function renderUsers(main, _params, ctx) {
 export async function renderAccount(main) {
   const error = h("div", { class: "error-text", role: "alert" });
   mount(main,
-    h("header", { class: "page-header" },
-      h("div", {}, h("span", { class: "eyebrow" }, "🔑 Account"), h("h1", {}, "帳號設定"),
-        h("p", { class: "page-sub" }, `${state.user.full_name} · ${state.user.email} · ${ROLE_LABEL[state.user.role]}`))),
-    h("section", { class: "card", style: "max-width:520px" },
-      h("div", { class: "card-title" }, "變更密碼"),
+    h("header", { class: "page-head" },
+      h("h1", {}, "帳號設定"),
+      h("p", {}, `${state.user.full_name}（${state.user.email}），${state.user.company_name}的${ROLE_LABEL[state.user.role]}。`)),
+    h("section", { class: "sheet", style: "max-width:520px" },
+      h("h2", { class: "sheet-title" }, "變更密碼"),
       h("form", {
         onsubmit: async (e) => {
           e.preventDefault();
@@ -85,7 +84,7 @@ export async function renderAccount(main) {
           try {
             await busy(e.submitter, () => api("POST", "/api/auth/password", { current_password: data.current_password, new_password: data.new_password }));
             e.target.reset();
-            toast("密碼已更新，其他裝置已登出");
+            toast("已更新密碼，其他裝置上的登入已失效。");
           } catch (err) { error.textContent = err.message; }
         },
       },
