@@ -168,13 +168,33 @@ function renderShell(active) {
   );
 
   const main = h("main", { class: "main", id: "main", tabindex: "-1" });
+  // On phones the sidebar becomes a drawer; the top bar keeps the case switcher one tap away
+  // and the tab bar at the bottom carries the main pages.
   const topbar = h("div", { class: "topbar" },
-    h("button", { class: "menu-btn", "aria-label": "開啟選單", onclick: () => shell.classList.toggle("nav-open") }, "選單"),
     h("div", { class: "seal-mark", "aria-hidden": "true" }, "審"),
-    h("b", { style: "font-family:var(--kai)" }, "RegReview"),
+    state.projects.length ? h("select", {
+      class: "topbar-case", "aria-label": "切換案件",
+      onchange: (e) => {
+        state.currentProjectId = Number(e.target.value);
+        navigate(`#/overview/${state.currentProjectId}`);
+      },
+    }, state.projects.map((p) => h("option", { value: p.id, selected: p.id === state.currentProjectId }, p.name)))
+      : h("b", { style: "font-family:var(--kai)" }, "RegReview"),
+  );
+  const tab = (route, label) => h("a", {
+    href: route === "overview" && state.currentProjectId ? `#/overview/${state.currentProjectId}` : `#/${route}`,
+    "aria-current": route === active ? "page" : null,
+  }, label);
+  const tabbar = h("nav", { class: "tabbar", "aria-label": "主要頁面" },
+    tab("overview", "總覽"), tab("timeline", "時程"), tab("projects", "案件"), tab("ai", "AI 分析"),
+    h("button", {
+      type: "button", "aria-label": "更多選項",
+      "aria-current": ["compare", "users", "account"].includes(active) ? "page" : null,
+      onclick: () => shell.classList.toggle("nav-open"),
+    }, "更多"),
   );
   shell.addEventListener("click", (e) => { if (e.target === shell) closeNav(); });
-  mount(shell, sidebar, h("div", {}, topbar, main));
+  mount(shell, sidebar, h("div", {}, topbar, main), tabbar);
   mount(app, shell);
   return main;
 }
@@ -194,6 +214,8 @@ async function render() {
   const { route, params } = parseRoute();
   const entry = NAV.find((n) => n.route === route && (!n.admin || isAdmin())) ?? NAV[0];
   const seq = ++renderSeq;
+  // A deep link to a case selects it before the shell draws the case switchers.
+  if (entry.route === "overview" && Number(params[0])) state.currentProjectId = Number(params[0]);
   const main = renderShell(entry.route);
   try {
     await entry.render(main, params, { navigate, rerender: render, isCurrent: () => seq === renderSeq });
