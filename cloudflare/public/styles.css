@@ -259,6 +259,13 @@ td .notes { min-width: 180px; }
   table.checklist td .notes { min-width: 0; }
 }
 
+/* Review thresholds (審查門檻) under a checklist item. */
+.criteria { margin-top: 6px; font-size: var(--t-xs); color: var(--ink-2); max-width: 62ch; }
+.criteria > summary { cursor: pointer; color: var(--link); width: fit-content; }
+.criteria ul, .criteria-list { margin: 6px 0 0; padding-left: 1.2em; display: grid; gap: 4px; line-height: 1.55; }
+.criteria-list { font-size: var(--t-sm); color: var(--ink); max-height: 50vh; overflow-y: auto; }
+@media print { .criteria { display: block; } .criteria > summary { color: var(--ink); } }
+
 /* Status select carries its status colour like an ink mark on the form. */
 .status-select {
   appearance: none; -webkit-appearance: none;

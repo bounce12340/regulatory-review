@@ -40,7 +40,7 @@ await step("public config + schemas", async () => {
   assert.equal(typeof cfg.data.ai_enabled, "boolean");
   const s = await a("GET", "/api/schemas");
   assert.deepEqual(s.data.schemas.map((x) => x.key).sort(),
-    ["drug_registration_extension", "food_registration", "medical_device_registration"]);
+    ["drug_registration_extension", "food_registration", "medical_device_registration", "new_drug_registration"]);
 });
 
 await step("protected routes require login", async () => {
@@ -86,6 +86,20 @@ await step("create drug project from TFDA template (7 items, default deadline)",
   assert.ok(items.every((i) => i.auto_risk && i.status === "pending"));
   // item3 (specification) pending → default rule high
   assert.equal(items.find((i) => i.item_key === "item3").risk_level, "high");
+});
+
+await step("new drug registration template carries review thresholds", async () => {
+  const r = await a("POST", "/api/projects", { name: "NDA 測試", schema_type: "new_drug_registration" });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  assert.equal(r.data.items.length, 35);
+  assert.ok(r.data.items.every((i) => Array.isArray(i.criteria) && i.criteria.length > 0));
+  const rtf = r.data.items.find((i) => i.item_key === "m1_rtf");
+  assert.equal(rtf.risk_level, "high");
+  assert.match(rtf.criteria.join(""), /RTF|113/);
+  const cpp = r.data.items.find((i) => i.item_key === "m1_cpp");
+  assert.equal(cpp.required, false);
+  assert.equal(r.data.summary.days_left, 180);
+  assert.equal((await a("DELETE", `/api/projects/${r.data.project.id}`)).status, 200);
 });
 
 await step("status change recomputes risk from YAML rules; manual risk ignored for template items", async () => {

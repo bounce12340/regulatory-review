@@ -188,13 +188,26 @@ function checklistRows(detail, filters, onDetail) {
     h("td", { class: "c-name" },
       h("div", { class: "item-name" }, item.item_name),
       h("div", { class: "item-sub" },
-        item.item_key ? (item.required ? "必要文件" : "選填文件") : "自訂項目",
+        item.item_key ? (item.required ? "必要文件" : "依適用性") : "自訂項目",
         item.category ? `，${item.category.replace(/_/g, " ")}` : ""),
+      item.criteria?.length ? h("details", { class: "criteria" },
+        h("summary", {}, `審查門檻（${item.criteria.length} 項）`),
+        h("ul", {}, item.criteria.map((c) => h("li", {}, c)))) : null,
     ),
     h("td", { class: "c-status" }, editable
       ? h("select", {
         class: `status-select s-${item.status}`, "aria-label": `${item.item_name} 狀態`,
-        onchange: (e) => save(item, { status: e.target.value }),
+        onchange: async (e) => {
+          // A review threshold is a gate: confirm each criterion before marking the item completed.
+          if (e.target.value === "completed" && item.criteria?.length) {
+            const ok = await confirmDialog(h("div", {},
+              h("strong", {}, `「${item.item_name}」確認已達以下審查門檻？`),
+              h("ul", { class: "criteria-list" }, item.criteria.map((c) => h("li", {}, c)))),
+            { okLabel: "已達門檻，標記完成" });
+            if (!ok) { e.target.value = item.status; return; }
+          }
+          save(item, { status: e.target.value });
+        },
       }, STATUSES.map((s) => h("option", { value: s, selected: item.status === s }, STATUS_LABEL[s])))
       : h("span", { class: `status-text s-${item.status}` }, STATUS_LABEL[item.status])),
     h("td", { class: "c-risk" }, editable && !item.auto_risk

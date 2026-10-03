@@ -301,7 +301,10 @@ async function projectItems(env: Env, projectId: number): Promise<ItemRow[]> {
 function decorateItems(schemaType: string, items: ItemRow[]) {
   return items.map((i) => {
     const tpl = findTemplateItem(schemaType, i.item_key);
-    return { ...i, required: Boolean(i.required), auto_risk: Boolean(tpl), action: tpl?.action_zh ?? null };
+    return {
+      ...i, required: Boolean(i.required), auto_risk: Boolean(tpl),
+      action: tpl?.action_zh ?? null, criteria: tpl?.criteria ?? [],
+    };
   });
 }
 

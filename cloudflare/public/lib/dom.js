@@ -85,7 +85,7 @@ export async function busy(button, fn, label = "處理中…") {
 export function confirmDialog(message, { okLabel = "確定", danger = false } = {}) {
   return new Promise((resolve) => {
     const dlg = h("dialog", {},
-      h("p", { style: "margin-top:0" }, message),
+      h("div", { style: "margin-bottom:16px" }, message),
       h("div", { class: "btn-row", style: "justify-content:flex-end" },
         h("button", { class: "btn", onclick: () => dlg.close("cancel") }, "取消"),
         h("button", { class: `btn ${danger ? "btn-danger" : "btn-primary"}`, onclick: () => dlg.close("ok") }, okLabel),
