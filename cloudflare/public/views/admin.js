@@ -22,23 +22,23 @@ export async function renderUsers(main, _params, ctx) {
       h("p", {}, `${state.user.company_name} 的成員與權限。管理員可管理所有設定；成員可編輯案件與執行 AI 分析；檢視者只能瀏覽。`)),
     h("section", { class: "sheet" },
       h("h2", { class: "sheet-title" }, "成員", h("span", { class: "aside" }, `${users.length} 位`)),
-      h("div", { class: "table-wrap" }, h("table", {},
+      h("div", { class: "table-wrap" }, h("table", { class: "members" },
         h("thead", {}, h("tr", {}, ["姓名", "Email", "角色", "狀態", "最後登入"].map((t) => h("th", {}, t)))),
         h("tbody", {}, users.map((u) => {
           const self = u.id === state.user.id;
           return h("tr", {},
             h("td", { class: "item-name" }, u.full_name, self ? h("span", { class: "muted small", style: "font-weight:400" }, "（你）") : null),
-            h("td", {}, u.email),
-            h("td", {}, self
+            h("td", { class: "m-email" }, u.email),
+            h("td", { class: "m-role" }, self
               ? ROLE_LABEL[u.role]
               : h("select", { class: "input", "aria-label": `${u.full_name} 角色`, onchange: (e) => update(u, { role: e.target.value }) },
                 ROLES.map((r) => h("option", { value: r, selected: u.role === r }, ROLE_LABEL[r])))),
-            h("td", {}, self
+            h("td", { class: "m-active" }, self
               ? "啟用中"
               : h("label", { class: "check" },
                 h("input", { type: "checkbox", checked: u.is_active, onchange: (e) => update(u, { is_active: e.target.checked }) }),
                 u.is_active ? "啟用中" : "已停用")),
-            h("td", { class: "small muted" }, u.last_login ? u.last_login.slice(0, 16).replace("T", " ") : "—"),
+            h("td", { class: "small muted m-login" }, u.last_login ? u.last_login.slice(0, 16).replace("T", " ") : "—"),
           );
         })),
       )),

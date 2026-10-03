@@ -23,7 +23,16 @@ export async function renderProjects(main, _params, ctx) {
   mount(main,
     h("header", { class: "page-head" },
       h("h1", {}, "案件管理"),
-      h("p", {}, "建立新的查驗登記案件，或調整既有案件的名稱、截止日與狀態。")),
+      h("p", {}, "建立新的查驗登記案件，或調整既有案件的名稱、截止日與狀態。"),
+      // The form sits below the case lists, so with a few cases it is off-screen; this jumps to it.
+      canEdit() && projects.length ? h("div", { class: "btn-row", style: "margin-top:14px" }, h("button", {
+        class: "btn btn-primary",
+        onclick: () => {
+          const form = document.getElementById("create-case");
+          form.scrollIntoView({ behavior: "smooth", block: "start" });
+          form.querySelector("input[name=name]").focus({ preventScroll: true });
+        },
+      }, "建立案件")) : null),
 
     projects.length ? null : h("section", { class: "sheet empty" },
       h("h2", {}, "還沒有任何案件"),
@@ -48,7 +57,7 @@ export async function renderProjects(main, _params, ctx) {
 function ledger(title, projects, reload) {
   return h("section", { class: "sheet" },
     h("h2", { class: "sheet-title" }, title, h("span", { class: "aside" }, `${projects.length} 件`)),
-    h("div", { class: "table-wrap" }, h("table", {},
+    h("div", { class: "table-wrap" }, h("table", { class: "ledger" },
       h("thead", {}, h("tr", {}, ["案件", "文件狀態", "截止日", "狀態", ""].map((t) => h("th", {}, t)))),
       h("tbody", {}, projects.map((p) => row(p, reload))),
     )),
@@ -65,17 +74,17 @@ function row(p, reload) {
     } catch (err) { toast(err.message, "error"); }
   };
   return h("tr", {},
-    h("td", {},
+    h("td", { class: "l-name" },
       h("a", { href: `#/overview/${p.id}`, class: "ledger-name" }, p.name),
       h("div", { class: "item-sub" }, p.schema_name)),
-    h("td", { style: "min-width:150px;vertical-align:middle" },
+    h("td", { class: "l-docs" },
       countStrip(p.summary.status_counts, { mini: true }),
       h("div", { class: "item-sub" }, `${p.summary.completed} ／ ${p.summary.total - (p.summary.not_applicable ?? 0)} 份完成`)),
-    h("td", { class: "nowrap" }, p.deadline ?? "未設定"),
-    h("td", {}, p.status === "active"
+    h("td", { class: "nowrap l-due" }, p.deadline ?? "未設定"),
+    h("td", { class: "l-status" }, p.status === "active"
       ? h("span", overallTag(p.summary), OVERALL_LABEL[p.summary.overall_status])
       : h("span", { class: "tag" }, PROJECT_STATUS_LABEL[p.status])),
-    h("td", {}, editable ? h("div", { class: "btn-row", style: "justify-content:flex-end" },
+    h("td", { class: "l-act" }, editable ? h("div", { class: "btn-row" },
       h("button", { class: "btn btn-sm", onclick: () => editDialog(p, reload) }, "編輯"),
       p.status === "active"
         ? [h("button", { class: "btn btn-sm", onclick: () => setStatus("completed", "已結案") }, "結案"),
@@ -141,7 +150,7 @@ function createForm(reload, ctx) {
   };
   updateHelp();
 
-  return h("section", { class: "sheet" },
+  return h("section", { class: "sheet", id: "create-case" },
     h("h2", { class: "sheet-title" }, "建立案件"),
     h("form", {
       onsubmit: async (e) => {
