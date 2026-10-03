@@ -471,6 +471,7 @@ details.disclose[open] > summary { margin-bottom: 14px; }
 .dropzone:hover, .dropzone.drag { border-color: var(--ink); color: var(--ink); }
 .dropzone strong { display: block; font-family: var(--kai); font-size: var(--t-xl); color: var(--ink); margin-bottom: 4px; }
 .dropzone .file { margin-top: 12px; color: var(--ink); font-size: var(--t-sm); }
+.dropzone .file-remove { margin-left: 10px; vertical-align: 1px; }
 .score { font-family: var(--kai); font-weight: 700; font-size: var(--t-3xl); line-height: 1; }
 .gap { border-bottom: 1px solid var(--rule); }
 .gap:last-child { border-bottom: 0; }

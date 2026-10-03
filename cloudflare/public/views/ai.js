@@ -39,8 +39,23 @@ export async function renderAi(main, _params, ctx) {
   function pick(f) {
     if (!f) return;
     file = f;
-    fileLine.replaceChildren(h("b", {}, f.name), `（${Math.max(1, Math.round(f.size / 1024))} KB）`);
+    fileLine.replaceChildren(h("b", {}, f.name), `（${Math.max(1, Math.round(f.size / 1024))} KB）`,
+      // preventDefault keeps the click from also opening the file picker of the surrounding label.
+      h("button", { type: "button", class: "btn btn-sm btn-danger file-remove", "aria-label": `移除 ${f.name}`,
+        onclick: (e) => { e.preventDefault(); e.stopPropagation(); clearFile(); } }, "移除"));
     analyzeBtn.disabled = false;
+  }
+
+  function clearFile() {
+    file = null;
+    input.value = "";  // so picking the same file again still fires "change"
+    fileLine.replaceChildren("尚未選擇檔案");
+    analyzeBtn.disabled = true;
+  }
+
+  function clearResult() {
+    lastResult = null;
+    results.replaceChildren();
   }
 
   const drop = h("label", {
@@ -62,7 +77,7 @@ export async function renderAi(main, _params, ctx) {
         const doc = await prepareDocument(file);
         lastResult = await api("POST", "/api/ai/analyze", { schema_type: schemaSelect.value, filename: file.name, text: doc.text });
       }, "分析中，約需 30 秒到 2 分鐘");
-      mount(results, report(lastResult));
+      mount(results, report(lastResult, clearResult));
       results.querySelector("h2")?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
     } catch (err) {
       mount(results, h("div", { class: "notice error", role: "alert" }, `無法完成分析：${err.message}`));
@@ -83,10 +98,10 @@ export async function renderAi(main, _params, ctx) {
     ),
     results,
   );
-  if (lastResult) mount(results, report(lastResult));
+  if (lastResult) mount(results, report(lastResult, clearResult));
 }
 
-function report(r) {
+function report(r, onClear) {
   const gaps = [...r.gaps].sort((a, b) => SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity));
   const high = gaps.filter((g) => g.severity === "high").length;
   const base = r.filename.replace(/\.[^.]+$/, "");
@@ -130,7 +145,9 @@ function report(r) {
         h("button", { class: "btn", onclick: () => download(`gap-report-${base}.md`, toMarkdown(r), "text/markdown") }, "下載 Markdown"),
         h("button", { class: "btn", onclick: () => download(`gap-report-${base}.json`, JSON.stringify(r, null, 2), "application/json") }, "下載 JSON"),
         h("button", { class: "btn", onclick: () => window.print() }, "列印或存成 PDF"),
+        h("button", { class: "btn btn-danger", style: "margin-left:auto", onclick: onClear }, "清除分析結果"),
       ),
+      h("p", { class: "help", style: "margin-top:10px" }, "上傳的文件與分析結果都不會存到伺服器；清除後就無法再找回，需要的話請先下載。"),
     ),
   );
 }
