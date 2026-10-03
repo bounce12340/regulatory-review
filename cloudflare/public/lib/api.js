@@ -53,6 +53,7 @@ export const STATUS_LABEL = {
   under_review: "審查中",
   blocked: "受阻",
   completed: "已完成",
+  not_applicable: "不適用",
 };
 export const STATUS_ICON = { pending: "○", in_progress: "◐", under_review: "◉", blocked: "✕", completed: "✓" };
 export const STATUS_COLOR = {

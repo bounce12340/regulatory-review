@@ -84,6 +84,33 @@ export async function busy(button, fn, label = "處理中…") {
   }
 }
 
+/** Asks for a short text (e.g. why an item is not applicable). Resolves to the text, or null on cancel. */
+export function textDialog(message, { label = "原因", value = "", okLabel = "確定", maxlength = 2000 } = {}) {
+  return new Promise((resolve) => {
+    const input = h("textarea", { class: "input", required: true, maxlength, "aria-label": label }, value);
+    const dlg = h("dialog", {},
+      h("form", {
+        method: "dialog",
+        onsubmit: (e) => {
+          if (!input.value.trim()) { e.preventDefault(); input.focus(); return; }
+          dlg.returnValue = "ok";
+        },
+      },
+        h("div", { style: "margin-bottom:12px" }, message),
+        field(label, input),
+        h("div", { class: "btn-row", style: "justify-content:flex-end;margin-top:16px" },
+          h("button", { class: "btn", type: "button", onclick: () => dlg.close("cancel") }, "取消"),
+          h("button", { class: "btn btn-primary", type: "submit" }, okLabel),
+        ),
+      ),
+    );
+    dlg.addEventListener("close", () => { resolve(dlg.returnValue === "ok" ? input.value.trim() : null); dlg.remove(); });
+    document.body.appendChild(dlg);
+    dlg.showModal();
+    input.focus();
+  });
+}
+
 export function confirmDialog(message, { okLabel = "確定", danger = false } = {}) {
   return new Promise((resolve) => {
     const dlg = h("dialog", {},

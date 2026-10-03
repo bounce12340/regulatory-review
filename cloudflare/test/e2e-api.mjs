@@ -43,7 +43,8 @@ await step("public config + schemas", async () => {
   assert.equal(typeof cfg.data.ai_enabled, "boolean");
   const s = await a("GET", "/api/schemas");
   assert.deepEqual(s.data.schemas.map((x) => x.key).sort(),
-    ["drug_registration_extension", "food_registration", "medical_device_registration", "new_drug_registration"]);
+    ["dmf_rtf_cep", "dmf_rtf_full", "dmf_rtf_lean", "dmf_rtf_reference", "drug_registration_extension", "food_registration",
+      "medical_device_registration", "new_drug_registration"]);
 });
 
 await step("protected routes require login", async () => {
@@ -107,6 +108,51 @@ await step("new drug registration template carries review thresholds", async () 
   assert.equal(r.data.summary.alert, false);
   assert.deepEqual(r.data.summary.alert_reasons, []);
   assert.equal((await a("DELETE", `/api/projects/${r.data.project.id}`)).status, 200);
+});
+
+await step("DMF RTF checklists: refuse-to-file verdict and 不適用 with a reason", async () => {
+  const schemas = (await a("GET", "/api/schemas")).data.schemas;
+  for (const [key, n] of [["dmf_rtf_full", 11], ["dmf_rtf_reference", 8], ["dmf_rtf_lean", 8], ["dmf_rtf_cep", 5]]) {
+    assert.equal(schemas.find((s) => s.key === key)?.item_count, n, key);
+  }
+  let r = await a("POST", "/api/projects", { name: "DMF 查檢表一", schema_type: "dmf_rtf_full" });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  const pid = r.data.project.id;
+  assert.equal(r.data.rtf.verdict, "refuse");
+  assert.deepEqual(r.data.rtf.rules.map((x) => [x.failures.length, x.max_failures]), [[6, 0], [5, 2]]);
+  const byKey = Object.fromEntries(r.data.items.map((i) => [i.item_key, i]));
+
+  // 不適用 needs a reason in the notes.
+  assert.equal((await a("PATCH", `/api/items/${byKey.dmf1_intermediate.id}`, { status: "not_applicable" })).status, 400);
+  r = await a("PATCH", `/api/items/${byKey.dmf1_intermediate.id}`, { status: "not_applicable", notes: "不適用原因：一步合成，無可分離中間體" });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.items.find((i) => i.item_key === "dmf1_intermediate").risk_level, "low");
+
+  // Items 1–6 done; of 7–11, two done, one N/A and two still open (「否」= 2, limit 2) → 續審.
+  for (const k of ["dmf1_rtf_form", "dmf1_ctd_32s", "dmf1_language", "dmf1_single_spec", "dmf1_spec_coa", "dmf1_stability",
+    "dmf1_process", "dmf1_starting_material"]) {
+    r = await a("PATCH", `/api/items/${byKey[k].id}`, { status: "completed" });
+  }
+  assert.equal(r.data.rtf.verdict, "continue");
+  assert.deepEqual(r.data.rtf.rules.map((x) => x.failures.length), [0, 2]);
+  assert.equal(r.data.summary.not_applicable, 1);
+  assert.equal(r.data.summary.completion_rate, 80);   // 8 of the 10 applicable items
+
+  // A third「否」among 7–11 → 退件.
+  r = await a("PATCH", `/api/items/${byKey.dmf1_process.id}`, { status: "blocked" });
+  assert.equal(r.data.rtf.verdict, "refuse");
+  assert.equal(r.data.rtf.rules[1].refused, true);
+  r = await a("PATCH", `/api/items/${byKey.dmf1_process.id}`, { status: "completed" });
+  assert.equal(r.data.rtf.verdict, "continue");
+
+  // One gate item back to in progress → 退件.
+  r = await a("PATCH", `/api/items/${byKey.dmf1_stability.id}`, { status: "in_progress" });
+  assert.equal(r.data.rtf.verdict, "refuse");
+  assert.deepEqual(r.data.rtf.rules[0].failures.map((f) => f.item_id), [byKey.dmf1_stability.id]);
+
+  // Schemas without RTF rules carry no verdict.
+  assert.equal((await a("GET", `/api/projects/${projectId}`)).data.rtf, null);
+  assert.equal((await a("DELETE", `/api/projects/${pid}`)).status, 200);
 });
 
 await step("status change recomputes risk from YAML rules; manual risk ignored for template items", async () => {

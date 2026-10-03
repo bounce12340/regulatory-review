@@ -19,6 +19,7 @@ describe("SCHEMAS mirrors config/regulatory_schemas.yaml", () => {
       expect(ts.display_name).toBe(ySchema.display_name);
       expect(ts.display_name_zh).toBe(ySchema.display_name_zh);
       expect(ts.deadline_default_days).toBe(ySchema.deadline_default_days);
+      expect(ts.rtf_rules).toEqual(ySchema.rtf_rules);
       // action_zh / criteria live in YAML only for newer schemas; compare them when present.
       expect(ts.items.map((i, n) => ({
         key: i.key, label: i.label, category: i.category, required: i.required,
@@ -33,6 +34,19 @@ describe("SCHEMAS mirrors config/regulatory_schemas.yaml", () => {
     const nda = SCHEMAS.new_drug_registration;
     expect(nda.items.length).toBeGreaterThanOrEqual(30);
     for (const i of nda.items) expect(i.criteria?.length, i.key).toBeGreaterThan(0);
+  });
+
+  it("DMF RTF checklists: every item sits in exactly one refuse-to-file rule", () => {
+    const dmf = Object.entries(SCHEMAS).filter(([k]) => k.startsWith("dmf_rtf_"));
+    expect(dmf.map(([k, s]) => [k, s.items.length])).toEqual([
+      ["dmf_rtf_full", 11], ["dmf_rtf_reference", 8], ["dmf_rtf_lean", 8], ["dmf_rtf_cep", 5],
+    ]);
+    for (const [, s] of dmf) {
+      expect(s.rtf_rules!.flatMap((r) => r.items)).toEqual(s.items.map((i) => i.key));
+      for (const i of s.items) expect(i.criteria?.length, i.key).toBeGreaterThan(0);
+    }
+    // 查檢表一: items 1–6 refuse on any「否」; items 7–11 refuse at three or more.
+    expect(SCHEMAS.dmf_rtf_full.rtf_rules!.map((r) => [r.items.length, r.max_failures])).toEqual([[6, 0], [5, 2]]);
   });
 
   it("every item has a Chinese action and a default risk", () => {

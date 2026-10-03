@@ -10,7 +10,7 @@ import {
   readSessionCookie, sessionCookie, slugify, validatePassword, verifyPassword,
 } from "./auth";
 import { AnalysisError, analyzeDocument, MAX_TEXT_CHARS, type AiConfig } from "./ai";
-import { actionItems, summarize, todayTaipei, type ItemRow, type ProjectRow } from "./report";
+import { actionItems, rtfVerdict, summarize, todayTaipei, type ItemRow, type ProjectRow } from "./report";
 import {
   findTemplateItem, isSchemaType, ITEM_STATUSES, RISK_LEVELS, riskFor, SCHEMAS,
   type ItemStatus, type RiskLevel,
@@ -315,6 +315,7 @@ async function projectDetail(env: Env, project: ProjectRow) {
     items: decorateItems(project.schema_type, items),
     summary: summarize(items, project.deadline, undefined, project.status === "active"),
     action_items: actionItems(project.schema_type, items),
+    rtf: rtfVerdict(project.schema_type, items),
   };
 }
 
@@ -443,6 +444,11 @@ async function deleteProject(env: Env, user: AuthUser, id: number): Promise<Resp
 
 // ── Checklist items ──────────────────────────────────────────────────────────
 
+/** RTF checklists ask for a reason next to every「不適用」; the reason lives in the notes. */
+function requireReasonIfNotApplicable(status: ItemStatus, notes: string | null) {
+  if (status === "not_applicable" && !notes?.trim()) throw new HttpError(400, "標記「不適用」時，請在備註寫明原因。");
+}
+
 async function createItem(request: Request, env: Env, user: AuthUser, projectId: number): Promise<Response> {
   requireRole(user, "admin", "member");
   const project = await getProject(env, user, projectId);
@@ -452,6 +458,7 @@ async function createItem(request: Request, env: Env, user: AuthUser, projectId:
   const status = body.status !== undefined ? oneOf(body.status, ITEM_STATUSES, "狀態") : "pending";
   const risk = body.risk_level !== undefined ? oneOf(body.risk_level, RISK_LEVELS, "風險等級") : "medium";
   const notes = str(body.notes, "備註", { max: 2000, required: false }) || null;
+  requireReasonIfNotApplicable(status, notes);
   const order = await env.DB.prepare("SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM checklist_item WHERE project_id = ?")
     .bind(project.id).first<{ n: number }>();
   await env.DB.batch([
@@ -485,6 +492,7 @@ async function updateItem(request: Request, env: Env, user: AuthUser, itemId: nu
 
   const status = body.status !== undefined ? oneOf(body.status, ITEM_STATUSES, "狀態") : item.status;
   const notes = body.notes !== undefined ? str(body.notes, "備註", { max: 2000, required: false }) || null : item.notes;
+  requireReasonIfNotApplicable(status, notes);
   // Template items name/risk come from the TFDA schema; only custom items are free-form.
   const itemName = !tpl && body.item_name !== undefined ? str(body.item_name, "項目名稱", { max: 500 }) : item.item_name;
   const risk: RiskLevel = tpl

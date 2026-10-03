@@ -70,7 +70,7 @@ function row(p, reload) {
       h("div", { class: "item-sub" }, p.schema_name)),
     h("td", { style: "min-width:150px;vertical-align:middle" },
       countStrip(p.summary.status_counts, { mini: true }),
-      h("div", { class: "item-sub" }, `${p.summary.completed} ／ ${p.summary.total} 份完成`)),
+      h("div", { class: "item-sub" }, `${p.summary.completed} ／ ${p.summary.total - (p.summary.not_applicable ?? 0)} 份完成`)),
     h("td", { class: "nowrap" }, p.deadline ?? "未設定"),
     h("td", {}, p.status === "active"
       ? h("span", overallTag(p.summary), OVERALL_LABEL[p.summary.overall_status])

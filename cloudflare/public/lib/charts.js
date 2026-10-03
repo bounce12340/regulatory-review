@@ -2,7 +2,7 @@
 import { h } from "./dom.js";
 import { STATUS_LABEL, OVERALL_LABEL, daysBetween } from "./api.js";
 
-const STATUS_ORDER = ["completed", "under_review", "in_progress", "blocked", "pending"];
+const STATUS_ORDER = ["completed", "not_applicable", "under_review", "in_progress", "blocked", "pending"];
 
 /** One block per checklist item, in checklist order, coloured by status. */
 export function docStrip(items, { mini = false } = {}) {

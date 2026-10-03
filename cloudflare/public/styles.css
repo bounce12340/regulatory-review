@@ -16,6 +16,8 @@
   --seal: #b3342a;
   --seal-wash: #f6e2de;
   --done: #2e6b4e;
+  --na: #6a5a8c;
+  --na-wash: #ebe6f2;
   --done-wash: #dcebe2;
   --review: #34509a;
   --review-wash: #e0e6f4;
@@ -48,7 +50,7 @@
     --paper: #131c25; --sheet: #18232e; --ink: #e3e8e5; --ink-2: #9aa8b1; --ink-3: #85939c;
     --rule: #2c3a47; --rule-soft: #22303c; --link: #9cc0e4;
     --seal: #e2584b; --seal-wash: rgba(226, 88, 75, .14);
-    --done: #6fbf94; --done-wash: rgba(111, 191, 148, .14);
+    --done: #6fbf94; --done-wash: rgba(111, 191, 148, .14); --na: #b3a5d6; --na-wash: rgba(179, 165, 214, .14);
     --review: #93a9e8; --review-wash: rgba(147, 169, 232, .14);
     --progress: #e0a948; --progress-wash: rgba(224, 169, 72, .14);
     --pending: #8e9ba4; --pending-wash: rgba(142, 155, 164, .14);
@@ -60,7 +62,7 @@
   --paper: #131c25; --sheet: #18232e; --ink: #e3e8e5; --ink-2: #9aa8b1; --ink-3: #85939c;
   --rule: #2c3a47; --rule-soft: #22303c; --link: #9cc0e4;
   --seal: #e2584b; --seal-wash: rgba(226, 88, 75, .14);
-  --done: #6fbf94; --done-wash: rgba(111, 191, 148, .14);
+  --done: #6fbf94; --done-wash: rgba(111, 191, 148, .14); --na: #b3a5d6; --na-wash: rgba(179, 165, 214, .14);
   --review: #93a9e8; --review-wash: rgba(147, 169, 232, .14);
   --progress: #e0a948; --progress-wash: rgba(224, 169, 72, .14);
   --pending: #8e9ba4; --pending-wash: rgba(142, 155, 164, .14);
@@ -225,6 +227,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .s-in_progress { --c: var(--progress); --w: var(--progress-wash); }
 .s-blocked { --c: var(--seal); --w: var(--seal-wash); }
 .s-pending { --c: var(--pending); --w: var(--pending-wash); }
+.s-not_applicable { --c: var(--na); --w: var(--na-wash); }
+/* In the document strip, a not-applicable item is hatched: set aside rather than done. */
+.strip span.s-not_applicable { background: repeating-linear-gradient(135deg, var(--na) 0 2px, var(--na-wash) 2px 4px); }
 
 /* ── Case body: form + rail ────────────────────────────────────────── */
 .case-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 26px; align-items: start; }
@@ -501,3 +506,18 @@ dialog h2 { font-size: var(--t-xl); margin-bottom: 16px; }
   .seal { animation: none; }
   body { background: #fff; }
 }
+
+/* RTF refuse-to-file self-check (原料藥／DMF checklists). */
+.rtf-verdict { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 12px; padding: 10px 14px; border: 2px solid var(--c); border-radius: 4px; background: var(--w); color: var(--c); }
+.rtf-verdict span { font-size: var(--t-sm); }
+.rtf-verdict b { font-family: var(--kai); font-size: var(--t-xl); letter-spacing: .1em; }
+.rtf-verdict.refuse { --c: var(--seal); --w: var(--seal-wash); }
+.rtf-verdict.pass { --c: var(--done); --w: var(--done-wash); }
+.rtf-rules { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.rtf-rules > li { padding: 8px 0 8px 12px; border-left: 3px solid var(--rule); font-size: var(--t-sm); }
+.rtf-rules > li.refused { border-left-color: var(--seal); }
+.rtf-rule { font-weight: 600; }
+.rtf-count { font-size: var(--t-xs); color: var(--ink-2); margin-top: 2px; }
+.rtf-rules > li.refused .rtf-count { color: var(--seal); }
+.rtf-rules ul { margin: 6px 0 0; padding-left: 1.2em; font-size: var(--t-xs); color: var(--ink-2); display: grid; gap: 3px; }
+.rtf .help { margin: 12px 0 0; }

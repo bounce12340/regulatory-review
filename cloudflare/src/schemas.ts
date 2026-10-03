@@ -5,7 +5,11 @@
  * so the YAML stays the single source of truth for labels, categories and risk rules.
  */
 
-export type ItemStatus = "completed" | "in_progress" | "under_review" | "blocked" | "pending";
+/**
+ * not_applicable mirrors the「不適用（請列原因）」column of TFDA RTF checklists: the item
+ * is resolved without a document, and the reason goes in the item's notes.
+ */
+export type ItemStatus = "completed" | "in_progress" | "under_review" | "blocked" | "pending" | "not_applicable";
 export type RiskLevel = "low" | "medium" | "high";
 
 export const ITEM_STATUSES: readonly ItemStatus[] = [
@@ -14,6 +18,7 @@ export const ITEM_STATUSES: readonly ItemStatus[] = [
   "under_review",
   "blocked",
   "completed",
+  "not_applicable",
 ];
 export const RISK_LEVELS: readonly RiskLevel[] = ["low", "medium", "high"];
 
@@ -24,6 +29,7 @@ export interface RiskRules {
   under_review?: RiskLevel;
   blocked?: RiskLevel;
   pending?: RiskLevel;
+  not_applicable?: RiskLevel;
 }
 
 export interface TemplateItem {
@@ -38,10 +44,21 @@ export interface TemplateItem {
   criteria?: string[];
 }
 
+/**
+ * A Refuse-to-File rule from a TFDA RTF checklist: the case is refused when more than
+ * max_failures of these items are「否」(neither completed nor not applicable).
+ */
+export interface RtfRule {
+  items: string[];
+  max_failures: number;
+  rule: string;
+}
+
 export interface Schema {
   display_name: string;
   display_name_zh: string;
   deadline_default_days: number;
+  rtf_rules?: RtfRule[];
   items: TemplateItem[];
 }
 
@@ -628,6 +645,386 @@ export const SCHEMAS: Record<string, Schema> = {
       },
     ],
   },
+  dmf_rtf_full: {
+    display_name: "API / DMF — RTF Checklist 1 (full technical data)",
+    display_name_zh: "原料藥／DMF 查檢表一（完整技術資料）",
+    deadline_default_days: 90,
+    rtf_rules: [
+      {
+        items: ["dmf1_rtf_form", "dmf1_ctd_32s", "dmf1_language", "dmf1_single_spec", "dmf1_spec_coa", "dmf1_stability"],
+        max_failures: 0,
+        rule: "第1至6任一項判定為「否」者，退件。",
+      },
+      {
+        items: ["dmf1_process", "dmf1_starting_material", "dmf1_intermediate", "dmf1_process_validation", "dmf1_method_validation"],
+        max_failures: 2,
+        rule: "第7至11項判定為「否」之總數≥3項，退件。",
+      },
+    ],
+    items: [
+      {
+        key: "dmf1_rtf_form", label: "檢送 RTF 查檢表（110年8月版 查檢表一）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Attach RTF checklist 1 (Aug 2021 version) with every item self-assessed",
+        action_zh: "填妥並檢附 110年8月版 RTF 查檢表一",
+        criteria: [
+          "適用：依102.02.21 署授食字第1021400426號「原料藥查驗登記審查技術資料查檢表」或第1021401257號「原料藥主檔案技術資料查檢表」檢齊資料之案件。",
+          "本表僅供單獨申請原料藥查驗登記或 DMF；學名藥案內併送原料藥資料者，改填「學名藥查驗登記退件機制 RTF 查檢表」〔問答集 Q2、Q7〕。",
+          "「業者審視情形」每項勾「是」或「不適用（列原因）」；「TFDA 審核結果」欄留白。",
+          "closed part 由原廠直送時，申請商仍須勾選並檢附本表；建議將查檢項目轉知原料藥廠協助確認〔問答集 Q3、Q8〕。",
+        ],
+      },
+      {
+        key: "dmf1_ctd_32s", label: "CTD Module 3 原料藥章節 3.2.S（含 open part 與 closed part）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Provide the full 3.2.S section (3.2.S.1.1–3.2.S.7.3), open and closed parts",
+        action_zh: "依 CTD 格式提供 3.2.S.1.1～3.2.S.7.3（open 與 closed part）",
+        criteria: [
+          "涵蓋 3.2.S.1.1～3.2.S.7.3，open part 與 closed part 均已提供或已安排原廠直送。",
+          "TFDA 於收案日起7日內函請行政補件（closed part），須於30日內回復〔問答集 Q4〕。",
+          "3.2.S.1 基本資料：化學結構（含立體結構、光學活性中心）、化學名／學名／CAS、分子式、分子量、外觀及理化性質〔98年查檢表〕。",
+        ],
+      },
+      {
+        key: "dmf1_language", label: "技術性資料為繁體中文或英文", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Provide technical data in Traditional Chinese or English",
+        action_zh: "技術性資料以繁體中文或英文提供",
+        criteria: [
+          "所有技術性資料（含原廠提供之 closed part）為繁體中文或英文版本。",
+        ],
+      },
+      {
+        key: "dmf1_single_spec", label: "僅宣稱一種原料藥規格（3.2.S.4.1）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Claim a single API specification in 3.2.S.4.1",
+        action_zh: "3.2.S.4.1 僅宣稱一套原料藥規格",
+        criteria: [
+          "一件 DMF 只核准一套規格；製程相同時可將 USP、EP 合併為一套廠規，並於核備函敘明同時符合〔問答集 Q9、Q10〕。",
+          "擬登記兩種不同規格者，應分開申請兩件 DMF〔問答集 Q9〕。",
+          "依藥典訂定者註明藥典名稱與版次，藥典收載之檢驗項目不得任意刪減〔98年查檢表〕。",
+        ],
+      },
+      {
+        key: "dmf1_spec_coa", label: "原料藥規格、方法及檢驗成績書（3.2.S.4.1／4.2／4.4）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Provide the API specification, analytical procedures and batch CoAs",
+        action_zh: "檢附原料藥規格、分析方法及批次檢驗成績書",
+        criteria: [
+          "提供規格與允收標準、分析方法及方法依據；依藥典者仍須檢附上述資料並敘明藥典及版次，不得僅附藥典依據〔問答集 Q13〕。",
+          "檢驗成績書填實測數據，不以「合格」「符合」「陰性」帶過；有效數字一致〔98年查檢表〕。",
+          "不純物資料含名稱、含量及管制方式，必要時附結構、方法、數據與圖譜〔98年查檢表〕。",
+        ],
+      },
+      {
+        key: "dmf1_stability", label: "安定性試驗：三批先導性規模、6個月加速及6個月長期（3.2.S.7）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Provide 6-month accelerated and 6-month long-term data on three pilot-scale batches",
+        action_zh: "依藥品安定性試驗基準提供三批先導性規模批次之6個月加速與6個月長期資料",
+        criteria: [
+          "依「藥品安定性試驗基準」：至少三批具代表性之先導性規模批次，已達6個月加速試驗及6個月長期試驗。",
+          "含試驗方法與條件、安定性指標分析方法、試驗數據及推定之再驗期／儲存條件〔98年查檢表〕。",
+        ],
+      },
+      {
+        key: "dmf1_process", label: "製程描述及製程管制（3.2.S.2.2）", category: "rtf_secondary", required: true,
+        risk_rules: { completed: "low", default: "medium" },
+        action: "Describe the synthetic steps, flow chart and in-process controls",
+        action_zh: "提供合成步驟、製程流程圖與製程管制",
+        criteria: [
+          "製程描述含合成步驟（化學合成者）與製程流程圖〔RTF 註1〕。",
+          "製程管制含製程中管制、關鍵步驟與關鍵參數，及量產批量〔RTF 註1〕。",
+          "反應方程式涵蓋反應條件、實際下料量、莫耳數及產率〔98年查檢表〕。",
+        ],
+      },
+      {
+        key: "dmf1_starting_material", label: "起始物資料（3.2.S.2.3）", category: "rtf_secondary", required: true,
+        risk_rules: { completed: "low", default: "medium" },
+        action: "Provide starting-material data and the justification for its selection (ICH Q11 §5)",
+        action_zh: "提供起始物規格、成績書及選擇合理性（ICH Q11 Section 5）",
+        criteria: [
+          "參考 ICH Q11 Section 5；除規格、方法、成績書外，應說明選擇該起始物之合理性〔RTF 註2〕。",
+          "僅經純化或鹽化即得原料藥之物質不接受作為起始物；非屬此者須提供或引用起始物技術性資料〔RTF 註2〕。",
+          "RTF 階段僅需提供起始物資料並說明合理性，不要求資料完整性〔問答集 Q11〕。",
+        ],
+      },
+      {
+        key: "dmf1_intermediate", label: "可分離之中間體規格（3.2.S.2.4）", category: "rtf_secondary", required: true,
+        risk_rules: { completed: "low", default: "medium" },
+        action: "Provide specifications for isolated intermediates",
+        action_zh: "提供可分離中間體（含關鍵、最終中間體）之規格",
+        criteria: [
+          "列出可分離之中間體（含關鍵中間體及最終中間體）之規格、方法及成績書〔98年查檢表〕。",
+          "製程中無可分離中間體者，勾「不適用」並列原因（推論：查檢表允許「不適用」且須列原因）。",
+          "中間體資料多屬 closed part，建議請原料藥廠協助確認〔問答集 Q12〕。",
+        ],
+      },
+      {
+        key: "dmf1_process_validation", label: "製程確效計畫書與報告書（3.2.S.2.5）", category: "rtf_secondary", required: true,
+        risk_rules: { completed: "low", default: "medium" },
+        action: "Provide the process validation protocol and report, or representative batch records",
+        action_zh: "提供製程確效計畫書與報告書，或代表性批次製造紀錄",
+        criteria: [
+          "可以具代表性之批次製造紀錄代替製程確效報告書〔RTF 註3〕。",
+          "製程含無菌操作或滅菌者，須另附相關確效資料〔RTF 註3〕。",
+          "批次紀錄偏離規格之結果須說明並提供 CAPA〔98年查檢表〕。",
+        ],
+      },
+      {
+        key: "dmf1_method_validation", label: "原料藥分析方法確效／確認（3.2.S.4.3）", category: "rtf_secondary", required: true,
+        risk_rules: { completed: "low", default: "medium" },
+        action: "Provide analytical method validation (non-compendial) or verification (compendial)",
+        action_zh: "非藥典方法附確效報告；藥典方法附確認報告",
+        criteria: [
+          "依「分析方法確效作業指導手冊」或 ICH Q2 執行〔RTF 註4〕。",
+          "非依藥典者提供分析方法確效報告書；依藥典者提供分析方法確認報告書〔RTF 註4〕。",
+        ],
+      },
+    ],
+  },
+  dmf_rtf_reference: {
+    display_name: "API / DMF — RTF Checklist 2 (citing approved data)",
+    display_name_zh: "原料藥／DMF 查檢表二（引用已核准資料）",
+    deadline_default_days: 90,
+    rtf_rules: [
+      {
+        items: ["dmf2_rtf_form", "dmf2_authorization", "dmf2_ctd_open", "dmf2_language", "dmf2_single_spec", "dmf2_spec_coa", "dmf2_stability", "dmf2_process"],
+        max_failures: 0,
+        rule: "應檢送 open part，第1至8任一項判定為「否」者，退件。",
+      },
+    ],
+    items: [
+      {
+        key: "dmf2_rtf_form", label: "檢送 RTF 查檢表（110年8月版 查檢表二）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Attach RTF checklist 2 (Aug 2021 version) with every item self-assessed",
+        action_zh: "填妥並檢附 110年8月版 RTF 查檢表二",
+        criteria: [
+          "適用：技術性資料為引用已核准之資料；除查檢表外仍須提供第2～8項 CMC 資料〔問答集 Q1〕。",
+          "被引用案件原依精實送審文件（100.06.21 署授食字第1001403285號）或 CEP/COS（104.02.24 部授食字第1031413543號）簡化申請者，改用查檢表三或四〔RTF 註1〕。",
+          "「業者審視情形」每項勾「是」或「不適用（列原因）」；「TFDA 審核結果」欄留白。",
+        ],
+      },
+      {
+        key: "dmf2_authorization", label: "效期內 DMF 號碼或核備函、原廠授權書及製程無變更聲明函", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Attach the valid DMF number or acceptance letter, the manufacturer's letter of authorization and no-change declaration",
+        action_zh: "檢附效期內 DMF 號碼／核備函、原料藥製造廠授權書與製程無變更聲明函",
+        criteria: [
+          "DMF 號碼或核備函在效期內。",
+          "授權書與製程無變更聲明函由原料藥製造廠出具。",
+          "製程曾變更者，檢附變更備查函。",
+        ],
+      },
+      {
+        key: "dmf2_ctd_open", label: "CTD Module 3 原料藥章節 3.2.S（open part）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Provide the 3.2.S open part (3.2.S.1.1–3.2.S.7.3)",
+        action_zh: "提供 3.2.S.1.1～3.2.S.7.3 之 open part",
+        criteria: [
+          "涵蓋 3.2.S.1.1～3.2.S.7.3 之 open part。",
+        ],
+      },
+      {
+        key: "dmf2_language", label: "技術性資料為繁體中文或英文", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Provide technical data in Traditional Chinese or English",
+        action_zh: "技術性資料以繁體中文或英文提供",
+        criteria: [
+          "所有技術性資料為繁體中文或英文版本。",
+        ],
+      },
+      {
+        key: "dmf2_single_spec", label: "僅宣稱一種原料藥規格（3.2.S.4.1）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Claim a single API specification in 3.2.S.4.1",
+        action_zh: "3.2.S.4.1 僅宣稱一套原料藥規格",
+        criteria: [
+          "一件 DMF 只核准一套規格；USP、EP 可合併為一套廠規〔問答集 Q9、Q10〕。",
+        ],
+      },
+      {
+        key: "dmf2_spec_coa", label: "原料藥規格、方法及檢驗成績書（3.2.S.4.1／4.2／4.4）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Provide the API specification, analytical procedures and batch CoAs",
+        action_zh: "檢附原料藥規格、分析方法及批次檢驗成績書",
+        criteria: [
+          "提供規格與允收標準、分析方法及依據；依藥典者敘明藥典及版次〔問答集 Q13〕。",
+          "檢驗成績書填實測數據〔98年查檢表〕。",
+        ],
+      },
+      {
+        key: "dmf2_stability", label: "安定性試驗：三批先導性規模、6個月加速及6個月長期（3.2.S.7）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Provide 6-month accelerated and 6-month long-term data on three pilot-scale batches",
+        action_zh: "依藥品安定性試驗基準提供三批先導性規模批次之6個月加速與6個月長期資料",
+        criteria: [
+          "依「藥品安定性試驗基準」：至少三批具代表性之先導性規模批次，已達6個月加速及6個月長期試驗。",
+        ],
+      },
+      {
+        key: "dmf2_process", label: "製程描述及製程管制（3.2.S.2.2）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Describe at least the synthetic steps and manufacturing flow chart",
+        action_zh: "至少提供合成步驟（化學合成圖）與製造流程圖",
+        criteria: [
+          "製程描述至少包括合成步驟（化學合成圖）與製造流程圖〔RTF 註2〕。",
+        ],
+      },
+    ],
+  },
+  dmf_rtf_lean: {
+    display_name: "API / DMF — RTF Checklist 3 (lean submission, reference-country approval)",
+    display_name_zh: "原料藥／DMF 查檢表三（精實送審）",
+    deadline_default_days: 90,
+    rtf_rules: [
+      {
+        items: ["dmf3_rtf_form", "dmf3_official_approval", "dmf3_language", "dmf3_starting_material", "dmf3_route", "dmf3_reagents", "dmf3_spec_coa", "dmf3_stability"],
+        max_failures: 0,
+        rule: "第1至8任一項判定為「否」者，退件。",
+      },
+    ],
+    items: [
+      {
+        key: "dmf3_rtf_form", label: "檢送 RTF 查檢表（110年8月版 查檢表三）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Attach RTF checklist 3 (Aug 2021 version) with every item self-assessed",
+        action_zh: "填妥並檢附 110年8月版 RTF 查檢表三",
+        criteria: [
+          "適用：依100.06.21 署授食字第1001403285號「原料藥主檔案精實送審文件」公告檢附資料之案件。",
+          "「業者審視情形」每項勾「是」或「不適用（列原因）」；「TFDA 審核結果」欄留白。",
+        ],
+      },
+      {
+        key: "dmf3_official_approval", label: "官方核准證明（美國 FDA、EDQM、EMA、PMDA 或十大醫藥先進國家）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Provide official evidence of approval by FDA, EDQM, EMA, PMDA or a reference country",
+        action_zh: "檢附官方核准證明文件",
+        criteria: [
+          "證明該原料藥已經美國 FDA、歐洲 EDQM、歐盟 EMA、日本 PMDA 或藥品查驗登記審查準則所稱之十大醫藥先進國家審查通過，或已有十大醫藥先進國家上市製劑使用該原料藥。",
+          "證明文件須為官方核准文件。",
+        ],
+      },
+      {
+        key: "dmf3_language", label: "技術性資料為繁體中文或英文", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Provide technical data in Traditional Chinese or English",
+        action_zh: "技術性資料以繁體中文或英文提供",
+        criteria: [
+          "所有技術性資料為繁體中文或英文版本。",
+        ],
+      },
+      {
+        key: "dmf3_starting_material", label: "起始物質資料：來源、規格、檢驗成績書（3.2.S.2.3）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Provide starting-material source, specification and CoA",
+        action_zh: "提供起始物質之來源、規格及檢驗成績書",
+        criteria: [
+          "包含起始物質之來源、規格及檢驗成績書。",
+        ],
+      },
+      {
+        key: "dmf3_route", label: "反應步驟及流程圖，敘明產率、下料量（3.2.S.2.2）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Provide reaction steps and flow chart with yields and charge quantities",
+        action_zh: "提供反應步驟與流程圖並敘明產率、下料量",
+        criteria: [
+          "反應步驟及流程圖完整，並敘明各步驟產率與下料量。",
+        ],
+      },
+      {
+        key: "dmf3_reagents", label: "反應途徑使用之有機溶劑、催化劑、試劑等（3.2.S.2.3）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "List the solvents, catalysts and reagents used in the route",
+        action_zh: "列出反應途徑中使用之有機溶劑、催化劑與試劑",
+        criteria: [
+          "列出反應途徑中使用之各種有機溶劑、催化劑、試劑等參與物。",
+        ],
+      },
+      {
+        key: "dmf3_spec_coa", label: "原料藥及中間體之規格、方法及成績書（3.2.S.2.4／4.1／4.2／4.4）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Provide specifications, methods and CoAs for the API and intermediates",
+        action_zh: "提供原料藥（成品）及中間體之規格、方法與成績書",
+        criteria: [
+          "原料藥（成品）及中間體均附檢驗規格、方法及成績書。",
+          "依藥典者敘明藥典及版次，並附規格與方法本身〔問答集 Q13〕。",
+        ],
+      },
+      {
+        key: "dmf3_stability", label: "安定性試驗條件及結果（3.2.S.7）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Provide 6-month accelerated and 6-month long-term data on three pilot-scale batches",
+        action_zh: "依藥品安定性試驗基準提供三批先導性規模批次之6個月加速與6個月長期資料",
+        criteria: [
+          "依「藥品安定性試驗基準」：至少三批具代表性之先導性規模批次，已達6個月加速及6個月長期試驗〔RTF 查檢表三註〕。",
+        ],
+      },
+    ],
+  },
+  dmf_rtf_cep: {
+    display_name: "API / DMF — RTF Checklist 4 (EDQM CEP/COS, simplified data)",
+    display_name_zh: "原料藥／DMF 查檢表四（具 EDQM CEP/COS）",
+    deadline_default_days: 90,
+    rtf_rules: [
+      {
+        items: ["dmf4_rtf_form", "dmf4_cep", "dmf4_language", "dmf4_coa", "dmf4_route"],
+        max_failures: 0,
+        rule: "第1至5任一項判定為「否」者，退件。",
+      },
+    ],
+    items: [
+      {
+        key: "dmf4_rtf_form", label: "檢送 RTF 查檢表（110年8月版 查檢表四）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Attach RTF checklist 4 (Aug 2021 version) with every item self-assessed",
+        action_zh: "填妥並檢附 110年8月版 RTF 查檢表四",
+        criteria: [
+          "適用：依104.02.24 部授食字第1031413543號「具EDQM之CEP/COS」公告檢附簡化技術性資料之案件。",
+          "無菌、生物性、發酵或植物性之原料藥不適用本表，應改用查檢表一。",
+          "「業者審視情形」每項勾「是」或「不適用（列原因）」；「TFDA 審核結果」欄留白。",
+        ],
+      },
+      {
+        key: "dmf4_cep", label: "CEP/COS 證書、同意 TFDA 參考 CEP/COS 審查資料之授權書及無變更聲明書", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Attach the CEP/COS, the letter authorizing TFDA to reference it, and the no-change declaration",
+        action_zh: "檢附 CEP/COS 證書、授權書與無變更聲明書",
+        criteria: [
+          "CEP/COS 證書為現行有效版本。",
+          "授權書載明同意衛福部食品藥物管理署參考 CEP/COS 審查資料。",
+          "附無變更聲明書。",
+        ],
+      },
+      {
+        key: "dmf4_language", label: "技術性資料為繁體中文或英文", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Provide technical data in Traditional Chinese or English",
+        action_zh: "技術性資料以繁體中文或英文提供",
+        criteria: [
+          "所有技術性資料為繁體中文或英文版本。",
+        ],
+      },
+      {
+        key: "dmf4_coa", label: "檢驗成績書（至少三批次）", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Attach certificates of analysis for at least three batches",
+        action_zh: "檢附至少三批次之檢驗成績書",
+        criteria: [
+          "至少三批次之檢驗成績書，檢驗項目與 CEP 核准規格一致（推論：以 CEP 為簡化依據）。",
+        ],
+      },
+      {
+        key: "dmf4_route", label: "EDQM 審查通過之現行合成步驟或製程", category: "rtf_gate", required: true,
+        risk_rules: { completed: "low", default: "high" },
+        action: "Provide the current synthetic route or process as approved by EDQM",
+        action_zh: "提供 EDQM 審查通過之現行合成步驟或製程",
+        criteria: [
+          "合成步驟或製程與 EDQM 審查通過之現行版本一致。",
+        ],
+      },
+    ],
+  },
 };
 
 export function isSchemaType(value: unknown): value is keyof typeof SCHEMAS {
@@ -641,5 +1038,6 @@ export function findTemplateItem(schemaType: string, itemKey: string | null): Te
 
 /** Risk for a template item in a given status, per its YAML risk_rules. */
 export function riskFor(rules: RiskRules, status: ItemStatus): RiskLevel {
-  return rules[status] ?? rules.default;
+  // A not-applicable item needs no document, so it carries no risk unless a rule says so.
+  return rules[status] ?? (status === "not_applicable" ? "low" : rules.default);
 }

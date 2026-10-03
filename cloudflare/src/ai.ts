@@ -126,6 +126,10 @@ export async function analyzeDocument(cfg: AiConfig, schemaType: string, input: 
   const instructions =
     `## 文件資訊\n- 檔案名稱：${input.filename}\n- 申請類型：${schema.display_name_zh}（${schemaType}）\n\n` +
     `## 文件要求清單\n${formatRequirements(schema)}\n\n` +
+    (schema.rtf_rules?.length
+      ? `## 退件判定原則（TFDA RTF 查檢表）\n${schema.rtf_rules.map((r) => `- ${r.rule}（項目：${r.items.join("、")}）`).join("\n")}\n` +
+        `清單順序即查檢表題號。請在 summary 說明依上述原則，本文件目前會被判定退件或續審，以及原因。\n\n`
+      : "") +
     `請依上述清單逐項分析附上的文件，產出缺口分析報告。gaps 只列出未完全符合的項目；完全符合者列入 compliant_items。\n\n` +
     `## 輸出格式\n只輸出一個符合下列 JSON Schema 的 JSON 物件：\n${JSON.stringify(GAP_REPORT_SCHEMA)}`;
   const messages: ChatMessage[] = [
