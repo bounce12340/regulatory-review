@@ -251,6 +251,28 @@ await step("deactivating a user kills their session", async () => {
   assert.equal((await a("PATCH", `/api/users/${self.id}`, { role: "viewer" })).status, 400);
 });
 
+await step("admin deletes a member; their edits stay", async () => {
+  const member = client();
+  const email = `member-${run}@a.test`;
+  assert.equal((await a("POST", "/api/users", { full_name: "將刪除", email, password: "password-789", role: "member" })).status, 200);
+  assert.equal((await member("POST", "/api/auth/login", { email, password: "password-789" })).status, 200);
+  assert.equal((await member("PATCH", `/api/items/${items[1].id}`, { status: "in_progress" })).status, 200);
+  const users = (await a("GET", "/api/users")).data.users;
+  const m = users.find((u) => u.email === email);
+  const self = users.find((u) => u.email === emailA);
+  assert.equal((await a("DELETE", `/api/users/${self.id}`)).status, 400);
+  assert.equal((await member("DELETE", `/api/users/${self.id}`)).status, 403);
+  assert.equal((await b("DELETE", `/api/users/${m.id}`)).status, 404);
+  const r = await a("DELETE", `/api/users/${m.id}`);
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.ok(!r.data.users.some((u) => u.email === email));
+  assert.equal((await member("GET", "/api/projects")).status, 401);
+  const item = (await a("GET", `/api/projects/${projectId}`)).data.items.find((i) => i.id === items[1].id);
+  assert.equal(item.status, "in_progress");
+  assert.equal((await a("DELETE", `/api/users/${m.id}`)).status, 404);
+  assert.equal((await a("POST", "/api/users", { full_name: "重新建立", email, password: "password-789" })).status, 200);
+});
+
 await step("only admin can delete a project", async () => {
   assert.equal((await a("DELETE", `/api/projects/${projectId}`)).status, 200);
   assert.equal((await a("GET", `/api/projects/${projectId}`)).status, 404);

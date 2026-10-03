@@ -290,6 +290,7 @@ table.ledger .l-act .btn-row { justify-content: flex-end; }
   table.ledger .l-act:empty { display: none; }
 }
 
+table.members .m-del { text-align: right; }
 /* Member list on a phone: name and email on top, role and status controls below. */
 @media (max-width: 700px) {
   table.members thead { display: none; }
@@ -299,6 +300,8 @@ table.ledger .l-act .btn-row { justify-content: flex-end; }
   table.members .m-email { grid-column: 1 / -1; overflow-wrap: anywhere; color: var(--ink-2); font-size: var(--t-sm); }
   table.members .m-login { grid-column: 1 / -1; }
   table.members .m-login::before { content: "最後登入 "; }
+  table.members .m-del { grid-column: 1 / -1; }
+  table.members .m-del:empty { display: none; }
 }
 
 /* Checklist sections (CTD modules). Each section is its own <tbody>. */
