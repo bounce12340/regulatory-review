@@ -1,6 +1,6 @@
 // AI document gap analysis: upload → (browser) extract text → Worker → Ollama.
 import { h, mount, download, busy, field } from "../lib/dom.js";
-import { api, state, canEdit, RISK_LABEL } from "../lib/api.js";
+import { api, state, canEdit, groupSchemas, RISK_LABEL } from "../lib/api.js";
 import { ACCEPT, prepareDocument } from "../lib/docparse.js";
 
 const GAP_STATUS = { missing: "缺少", incomplete: "不完整", non_compliant: "不符合" };
@@ -33,7 +33,8 @@ export async function renderAi(main, _params, ctx) {
   const fileLine = h("div", { class: "file" }, "尚未選擇檔案");
   const input = h("input", { type: "file", accept: ACCEPT, class: "sr-only", id: "ai-file", onchange: (e) => pick(e.target.files[0]) });
   const analyzeBtn = h("button", { class: "btn btn-primary btn-block", disabled: true, onclick: () => run() }, "開始分析");
-  const schemaSelect = h("select", { class: "input" }, state.schemas.map((s) => h("option", { value: s.key }, s.name_zh)));
+  const schemaSelect = h("select", { class: "input" }, groupSchemas(state.schemas).map((g) =>
+    h("optgroup", { label: g.label }, g.items.map((s) => h("option", { value: s.key }, s.name_zh)))));
 
   function pick(f) {
     if (!f) return;

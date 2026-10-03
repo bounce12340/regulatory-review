@@ -82,6 +82,19 @@ export function overallTag(summary) {
   return { class: `tag ${summary.overall_status}${summary.alert ? " alert" : ""}`, title: why || null };
 }
 
+/** Application types grouped for <select> menus, in this order. */
+export function groupSchemas(schemas) {
+  const family = (key) => key.startsWith("dmf_") ? "原料藥／DMF（RTF 查檢表）"
+    : key.startsWith("pmf_") || key.startsWith("gmp_") ? "國外藥廠 GMP（PMF／實地查核）" : "藥品查驗登記";
+  const groups = new Map();
+  for (const s of schemas) {
+    const f = family(s.key);
+    if (!groups.has(f)) groups.set(f, []);
+    groups.get(f).push(s);
+  }
+  return [...groups].map(([label, items]) => ({ label, items }));
+}
+
 export const PROJECT_STATUS_LABEL = { active: "進行中", archived: "已封存", completed: "已結案" };
 export const ROLE_LABEL = { admin: "管理員", member: "成員", viewer: "檢視者" };
 

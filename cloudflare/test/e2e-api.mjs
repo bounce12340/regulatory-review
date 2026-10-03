@@ -44,7 +44,9 @@ await step("public config + schemas", async () => {
   const s = await a("GET", "/api/schemas");
   assert.deepEqual(s.data.schemas.map((x) => x.key).sort(),
     ["dmf_rtf_cep", "dmf_rtf_full", "dmf_rtf_lean", "dmf_rtf_reference", "drug_registration_extension", "food_registration",
-      "medical_device_registration", "new_drug_registration"]);
+      "gmp_onsite_inspection", "medical_device_registration", "new_drug_registration", "pmf_bio_full", "pmf_bio_simplified",
+      "pmf_expansion", "pmf_nonsterile_full", "pmf_nonsterile_simplified", "pmf_quote_holder_new", "pmf_quote_nonholder_diff",
+      "pmf_quote_same", "pmf_sterile_full", "pmf_sterile_simplified"]);
 });
 
 await step("protected routes require login", async () => {
@@ -153,6 +155,22 @@ await step("DMF RTF checklists: refuse-to-file verdict and 不適用 with a reas
   // Schemas without RTF rules carry no verdict.
   assert.equal((await a("GET", `/api/projects/${projectId}`)).data.rtf, null);
   assert.equal((await a("DELETE", `/api/projects/${pid}`)).status, 200);
+});
+
+await step("PMF template: 確效替代 replaces Form C-5 through 不適用", async () => {
+  let r = await a("POST", "/api/projects", { name: "PMF 生物簡化", schema_type: "pmf_bio_simplified" });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  assert.equal(r.data.items.length, 26);
+  assert.equal(r.data.rtf, null);
+  const c5 = r.data.items.find((i) => i.item_key === "pmf_c5");
+  const alt = r.data.items.find((i) => i.item_key === "val_alternative");
+  assert.equal(alt.required, false);
+  r = await a("PATCH", `/api/items/${c5.id}`, { status: "not_applicable", notes: "不適用原因：採確效替代" });
+  assert.equal(r.status, 200);
+  r = await a("PATCH", `/api/items/${alt.id}`, { status: "completed" });
+  assert.equal(r.data.summary.not_applicable, 1);
+  assert.equal(r.data.summary.completed, 1);
+  assert.equal((await a("DELETE", `/api/projects/${r.data.project.id}`)).status, 200);
 });
 
 await step("status change recomputes risk from YAML rules; manual risk ignored for template items", async () => {

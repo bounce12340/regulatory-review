@@ -26,6 +26,13 @@ const GROUPS = [
   { key: "m5", label: "M5 臨床", cats: ["module5_clinical"] },
   { key: "cross", label: "全案一致性", cats: ["cross_module"] },
   { key: "nda_type", label: "新藥類別審查重點（依適用性）", cats: ["nda_type"] },
+  // 國外藥廠 PMF: sections follow TFDA's forms A, B, C-1, the route-specific documents and C-2～C-5.
+  { key: "pmf_a", label: "表A 送審表", cats: ["pmf_form_a"] },
+  { key: "pmf_b", label: "表B 行政文件", cats: ["pmf_form_b"] },
+  { key: "pmf_c1", label: "表C-1 共通性資料", cats: ["pmf_form_c1"] },
+  { key: "pmf_mode", label: "申請方式應附文件（簡化／確效替代）", cats: ["pmf_mode"] },
+  { key: "pmf_c", label: "表C-2～C-5 技術查核表", cats: ["pmf_form_c"] },
+  { key: "gmp_onsite", label: "實地查核申請文件", cats: ["gmp_onsite"] },
   // 原料藥／DMF RTF checklists: sections follow the refuse-to-file rules, so row numbers
   // stay the same as the numbering on TFDA's form.
   { key: "rtf_gate", label: "退件關鍵項", cats: ["rtf_gate"] },
