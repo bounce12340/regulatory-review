@@ -1,12 +1,15 @@
 // Project overview: case header (seal + document strip), checklist form, side rail.
-import { h, mount, toast, download, formData, busy, confirmDialog, field } from "../lib/dom.js";
+import { h, mount, toast, download, formData, busy, confirmDialog, textDialog, field } from "../lib/dom.js";
 import {
   api, state, canEdit, refreshProjects, timelineElapsed, alertText,
   STATUS_LABEL, RISK_LABEL, OVERALL_LABEL,
 } from "../lib/api.js";
 import { docStrip, stripLegend, meter, seal } from "../lib/charts.js";
 
-const STATUSES = ["pending", "in_progress", "under_review", "blocked", "completed"];
+const STATUSES = ["pending", "in_progress", "under_review", "blocked", "completed", "not_applicable"];
+// 「是」in a TFDA RTF checklist: the document is in, or the item does not apply (with a reason).
+const isResolved = (i) => i.status === "completed" || i.status === "not_applicable";
+const NA_PREFIX = "不適用原因：";
 const RISKS = ["low", "medium", "high"];
 const TODO_LIMIT = 6;
 // Below this share of elapsed time a timeline meter says nothing useful yet.
@@ -22,6 +25,22 @@ const GROUPS = [
   { key: "m4", label: "M4 非臨床", cats: ["module4_nonclinical"] },
   { key: "m5", label: "M5 臨床", cats: ["module5_clinical"] },
   { key: "cross", label: "全案一致性", cats: ["cross_module"] },
+  { key: "nda_type", label: "新藥類別審查重點（依適用性）", cats: ["nda_type"] },
+  // 國外藥廠 PMF: sections follow TFDA's forms A, B, C-1, the route-specific documents and C-2～C-5.
+  { key: "pmf_a", label: "表A 送審表", cats: ["pmf_form_a"] },
+  { key: "pmf_b", label: "表B 行政文件", cats: ["pmf_form_b"] },
+  { key: "pmf_c1", label: "表C-1 共通性資料", cats: ["pmf_form_c1"] },
+  { key: "pmf_mode", label: "申請方式應附文件（簡化／確效替代）", cats: ["pmf_mode"] },
+  { key: "pmf_c", label: "表C-2～C-5 技術查核表", cats: ["pmf_form_c"] },
+  { key: "gmp_onsite", label: "實地查核申請文件", cats: ["gmp_onsite"] },
+  // 銜接性試驗評估（BSE）: Appendix E items, the self-assessment report, then the study if one is required.
+  { key: "bse_check", label: "附錄E 查檢表（Ⅰ～Ⅷ）", cats: ["bse_check"] },
+  { key: "bse_report", label: "BSE 自我評估報告", cats: ["bse_report"] },
+  { key: "bse_study", label: "銜接性試驗（經評估須執行時）", cats: ["bse_study"] },
+  // 原料藥／DMF RTF checklists: sections follow the refuse-to-file rules, so row numbers
+  // stay the same as the numbering on TFDA's form.
+  { key: "rtf_gate", label: "退件關鍵項", cats: ["rtf_gate"] },
+  { key: "rtf_secondary", label: "退件累計項", cats: ["rtf_secondary"] },
 ];
 const CUSTOM_GROUP = { key: "custom", label: "自訂項目" };
 
@@ -108,12 +127,13 @@ function view(detail, filters, { onDetail, onFilter, animate }) {
       h("h1", { class: "case-title" }, project.name),
       project.description ? h("p", { class: "case-desc" }, project.description) : null,
       h("dl", { class: "facts" },
-        fact("文件完成", summary.completed, `／ ${summary.total} 份`),
+        fact("文件完成", summary.completed, `／ ${summary.total - summary.not_applicable} 份${summary.not_applicable ? `（不適用 ${summary.not_applicable}）` : ""}`),
         fact("截止日", project.deadline ?? "未設定"),
         fact("剩餘", summary.days_left === null ? "—" : summary.days_left < 0 ? `逾期 ${-summary.days_left}` : summary.days_left, "天",
           summary.alert_reasons.includes("overdue") || summary.alert_reasons.includes("due_soon")),
         fact("高風險", summary.high_risk_items, "項", summary.alert && summary.high_risk_items > 0),
         summary.blocked_items ? fact("受阻", summary.blocked_items, "項", true) : null,
+        detail.rtf ? fact("RTF 判定", detail.rtf.verdict === "refuse" ? "退件" : "續審", null, detail.rtf.verdict === "refuse") : null,
       ),
       urgent ? h("p", { class: "case-alert" }, `需要立即處理：${urgent}。`) : null,
       docStrip(items),
@@ -144,6 +164,7 @@ function view(detail, filters, { onDetail, onFilter, animate }) {
       ),
 
       h("aside", { class: "rail" },
+        detail.rtf ? rtfPanel(detail.rtf) : null,
         h("section", { class: "sheet" },
           h("h2", { class: "sheet-title" }, "時程"),
           meter("文件完成度", summary.completion_rate),
@@ -191,6 +212,23 @@ function filterItems(items, f) {
 function countLabel(items, f) {
   const n = filterItems(items, f).length;
   return n === items.length ? `共 ${items.length} 份` : `顯示 ${n} ／ ${items.length} 份`;
+}
+
+/** TFDA refuse-to-file self-check: what the RTF review would decide if the case went in today. */
+function rtfPanel(rtf) {
+  const refused = rtf.verdict === "refuse";
+  return h("section", { class: "sheet rtf" },
+    h("h2", { class: "sheet-title" }, "RTF 退件判定"),
+    h("p", { class: `rtf-verdict${refused ? " refuse" : " pass"}` },
+      h("span", {}, "若現在送件"), h("b", {}, refused ? "退件" : "續審")),
+    h("ol", { class: "rtf-rules" }, rtf.rules.map((r) => h("li", { class: r.refused ? "refused" : null },
+      h("div", { class: "rtf-rule" }, r.rule),
+      h("div", { class: "rtf-count" },
+        r.failures.length ? `目前「否」${r.failures.length} 項` : "目前沒有「否」",
+        r.max_failures ? `，可容許 ${r.max_failures} 項` : ""),
+      r.failures.length ? h("ul", {}, r.failures.map((f) => h("li", {}, f.item))) : null))),
+    h("p", { class: "help" }, "「已完成」或「不適用（附原因）」視為「是」，其他狀態視為「否」。正式結果以 TFDA 審核為準。"),
+  );
 }
 
 function todoList(actionItems) {
@@ -249,7 +287,8 @@ function checklistBodies(detail, filters, onDetail) {
   return groups.flatMap((g) => {
     const rows = g.items.filter((i) => visible.has(i));
     if (!rows.length) return [];
-    const done = g.items.filter((i) => i.status === "completed").length;
+    const done = g.items.filter(isResolved).length;
+    const na = g.items.filter((i) => i.status === "not_applicable").length;
     const stateKey = `${detail.project.id}:${g.key}`;
     const open = filtering || (sectionOpen.get(stateKey) ?? done < g.items.length);
     const headId = `grp-${g.key}`;
@@ -265,7 +304,7 @@ function checklistBodies(detail, filters, onDetail) {
         },
           h("span", { class: "group-label" }, g.label),
           decorative(docStrip(g.items, { mini: true })),
-          h("span", { class: `group-count${done === g.items.length ? " all-done" : ""}` }, `完成 ${done}／${g.items.length}`),
+          h("span", { class: `group-count${done === g.items.length ? " all-done" : ""}` }, `完成 ${done}／${g.items.length}${na ? `（含不適用 ${na}）` : ""}`),
         ))),
       rows.map(row));
     return [body];
@@ -300,6 +339,16 @@ function itemRow(item, n, save, onDetail) {
               h("ul", { class: "criteria-list" }, item.criteria.map((c) => h("li", {}, c)))),
             { okLabel: "已達門檻，標記完成" });
             if (!ok) { e.target.value = item.status; return; }
+          }
+          // TFDA's RTF forms ask for a reason next to every「不適用」; it is kept in the notes.
+          if (e.target.value === "not_applicable") {
+            const prior = (item.notes ?? "").startsWith(NA_PREFIX) ? item.notes.slice(NA_PREFIX.length) : "";
+            const reason = await textDialog(h("strong", {}, `「${item.item_name}」為什麼不適用？`),
+              { label: "不適用原因", value: prior, okLabel: "標記不適用" });
+            if (reason === null) { e.target.value = item.status; return; }
+            const rest = item.notes && !item.notes.startsWith(NA_PREFIX) ? `\n${item.notes}` : "";
+            save(item, { status: "not_applicable", notes: `${NA_PREFIX}${reason}${rest}`.slice(0, 2000) });
+            return;
           }
           save(item, { status: e.target.value });
         },
@@ -353,7 +402,7 @@ function addItemForm(detail, onDetail) {
   );
 }
 
-function toMarkdown({ project, summary, items, action_items }) {
+function toMarkdown({ project, summary, items, action_items, rtf }) {
   const esc = (s) => String(s ?? "").replace(/\|/g, "\\|").replace(/\n/g, " ");
   const lines = [
     `# 法規審查報告：${project.name}`,
@@ -361,7 +410,7 @@ function toMarkdown({ project, summary, items, action_items }) {
     `- **申請類型：** ${project.schema_name}`,
     `- **產出日期：** ${state.today}`,
     `- **整體狀態：** ${OVERALL_LABEL[summary.overall_status]}`,
-    `- **完成度：** ${summary.completion_rate.toFixed(1)}%（${summary.completed}/${summary.total}）`,
+    `- **完成度：** ${summary.completion_rate.toFixed(1)}%（${summary.completed}/${summary.total - summary.not_applicable}${summary.not_applicable ? `，另 ${summary.not_applicable} 項不適用` : ""}）`,
     `- **截止日期：** ${project.deadline ?? "未設定"}${summary.days_left !== null ? `（剩餘 ${summary.days_left} 天）` : ""}`,
     "",
     "## 文件檢查清單",
@@ -370,6 +419,13 @@ function toMarkdown({ project, summary, items, action_items }) {
     "|---|------|------|------|------|",
     ...displayOrder(items).map((i, n) => `| ${n + 1} | ${esc(i.item_name)} | ${STATUS_LABEL[i.status]} | ${RISK_LABEL[i.risk_level]} | ${esc(i.notes)} |`),
   ];
+  if (rtf) {
+    lines.push("", "## RTF 退件判定（自我檢核）", "", `- **若現在送件：** ${rtf.verdict === "refuse" ? "退件" : "續審"}`);
+    for (const r of rtf.rules) {
+      lines.push(`- ${r.rule}：目前「否」${r.failures.length} 項${r.refused ? "（觸發退件）" : ""}`);
+      for (const f of r.failures) lines.push(`  - ${f.item}`);
+    }
+  }
   if (action_items.length) {
     lines.push("", "## 待辦", "");
     for (const a of action_items) lines.push(`- [${a.priority === "high" ? "高" : "中"}] **${a.item}**：${a.action}`);

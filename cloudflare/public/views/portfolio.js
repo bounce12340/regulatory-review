@@ -60,7 +60,7 @@ export async function renderCompare(main, _params, ctx) {
         h("tbody", {}, projects.map((p) => h("tr", {},
           h("td", {}, h("a", { href: `#/overview/${p.id}`, class: "item-name" }, p.name), h("div", { class: "item-sub" }, p.schema_name)),
           h("td", { style: "min-width:160px;vertical-align:middle" }, countStrip(p.summary.status_counts, { mini: true })),
-          h("td", { class: "nowrap" }, `${p.summary.completed} ／ ${p.summary.total}`),
+          h("td", { class: "nowrap" }, `${p.summary.completed} ／ ${p.summary.total - (p.summary.not_applicable ?? 0)}`),
           h("td", {}, p.summary.high_risk_items
             ? h("span", { class: p.summary.alert ? "risk high" : "nowrap" }, p.summary.high_risk_items)
             : h("span", { class: "muted" }, "0")),

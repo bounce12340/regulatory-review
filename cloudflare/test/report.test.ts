@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { actionItems, alertReasons, daysBetween, overallStatus, summarize, todayTaipei, type ItemRow } from "../src/report";
+import { actionItems, alertReasons, daysBetween, overallStatus, rtfVerdict, summarize, todayTaipei, type ItemRow } from "../src/report";
+import { SCHEMAS } from "../src/schemas";
 
 let nextId = 1;
 function item(status: ItemRow["status"], risk: ItemRow["risk_level"], key: string | null = null): ItemRow {
@@ -39,7 +40,7 @@ describe("summarize", () => {
     expect(s.days_left).toBe(30);
     expect(s.blocked_items).toBe(1);
     expect(s.alert_reasons).toEqual(["blocked"]);
-    expect(s.status_counts).toEqual({ pending: 1, in_progress: 1, under_review: 1, blocked: 1, completed: 3 });
+    expect(s.status_counts).toEqual({ pending: 1, in_progress: 1, under_review: 1, blocked: 1, completed: 3, not_applicable: 0 });
     expect(s.risk_counts).toEqual({ low: 3, medium: 2, high: 2 });
   });
 
@@ -91,5 +92,57 @@ describe("dates", () => {
   it("todayTaipei uses UTC+8", () => {
     expect(todayTaipei(new Date("2026-09-30T16:30:00Z"))).toBe("2026-10-01");
     expect(todayTaipei(new Date("2026-09-30T15:59:00Z"))).toBe("2026-09-30");
+  });
+});
+
+describe("not applicable (不適用)", () => {
+  it("leaves N/A items out of the completion rate and the to-do list", () => {
+    const items = [item("completed", "low"), item("not_applicable", "low"), item("pending", "high")];
+    const s = summarize(items, "2027-04-01", "2026-10-01");
+    expect(s.not_applicable).toBe(1);
+    expect(s.completion_rate).toBe(50);
+    expect(actionItems("food_registration", items)).toHaveLength(1);
+  });
+  it("counts a case whose open items are all N/A as complete", () => {
+    const s = summarize([item("completed", "low"), item("not_applicable", "low")], "2026-10-05", "2026-10-01");
+    expect(s.completion_rate).toBe(100);
+    expect(s.overall_status).toBe("ready_for_submission");
+    expect(s.alert).toBe(false);
+  });
+});
+
+describe("rtfVerdict (原料藥／DMF 退件判定)", () => {
+  const caseFor = (schema: string, status: (key: string, n: number) => ItemRow["status"]) =>
+    SCHEMAS[schema].items.map((t, n) => ({ ...item(status(t.key, n), "low", t.key), item_name: t.label }));
+
+  it("returns null for schemas without RTF rules", () => {
+    expect(rtfVerdict("food_registration", [])).toBeNull();
+  });
+
+  it("查檢表一: all of items 1–6 done and two of 7–11 missing → 續審", () => {
+    const v = rtfVerdict("dmf_rtf_full", caseFor("dmf_rtf_full", (_, n) => (n === 8 || n === 9 ? "pending" : "completed")))!;
+    expect(v.verdict).toBe("continue");
+    expect(v.rules.map((r) => [r.failures.length, r.refused])).toEqual([[0, false], [2, false]]);
+  });
+
+  it("查檢表一: three of items 7–11 missing → 退件", () => {
+    const v = rtfVerdict("dmf_rtf_full", caseFor("dmf_rtf_full", (_, n) => (n >= 8 ? "in_progress" : "completed")))!;
+    expect(v.verdict).toBe("refuse");
+    expect(v.rules[1]).toMatchObject({ refused: true, max_failures: 2 });
+    expect(v.rules[1].failures).toHaveLength(3);
+  });
+
+  it("查檢表一: a single missing item among 1–6 → 退件", () => {
+    const v = rtfVerdict("dmf_rtf_full", caseFor("dmf_rtf_full", (k) => (k === "dmf1_stability" ? "under_review" : "completed")))!;
+    expect(v.verdict).toBe("refuse");
+    expect(v.rules[0].failures.map((f) => f.item)).toEqual([SCHEMAS.dmf_rtf_full.items[5].label]);
+  });
+
+  it("treats 不適用 as「是」and a template item missing from the case as「否」", () => {
+    const items = caseFor("dmf_rtf_cep", (k) => (k === "dmf4_language" ? "not_applicable" : "completed"));
+    expect(rtfVerdict("dmf_rtf_cep", items)!.verdict).toBe("continue");
+    const v = rtfVerdict("dmf_rtf_cep", items.filter((i) => i.item_key !== "dmf4_coa"))!;
+    expect(v.verdict).toBe("refuse");
+    expect(v.rules[0].failures).toEqual([{ item_id: null, item: SCHEMAS.dmf_rtf_cep.items[3].label }]);
   });
 });

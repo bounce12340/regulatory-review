@@ -43,7 +43,10 @@ await step("public config + schemas", async () => {
   assert.equal(typeof cfg.data.ai_enabled, "boolean");
   const s = await a("GET", "/api/schemas");
   assert.deepEqual(s.data.schemas.map((x) => x.key).sort(),
-    ["drug_registration_extension", "food_registration", "medical_device_registration", "new_drug_registration"]);
+    ["bse_application", "dmf_rtf_cep", "dmf_rtf_full", "dmf_rtf_lean", "dmf_rtf_reference", "drug_registration_extension", "food_registration",
+      "gmp_onsite_inspection", "medical_device_registration", "new_drug_registration", "pmf_bio_full", "pmf_bio_simplified",
+      "pmf_expansion", "pmf_nonsterile_full", "pmf_nonsterile_simplified", "pmf_quote_holder_new", "pmf_quote_nonholder_diff",
+      "pmf_quote_same", "pmf_sterile_full", "pmf_sterile_simplified"]);
 });
 
 await step("protected routes require login", async () => {
@@ -94,7 +97,7 @@ await step("create drug project from TFDA template (7 items, default deadline)",
 await step("new drug registration template carries review thresholds", async () => {
   const r = await a("POST", "/api/projects", { name: "NDA 測試", schema_type: "new_drug_registration" });
   assert.equal(r.status, 201, JSON.stringify(r.data));
-  assert.equal(r.data.items.length, 35);
+  assert.equal(r.data.items.length, 46);
   assert.ok(r.data.items.every((i) => Array.isArray(i.criteria) && i.criteria.length > 0));
   const rtf = r.data.items.find((i) => i.item_key === "m1_rtf");
   assert.equal(rtf.risk_level, "high");
@@ -106,6 +109,67 @@ await step("new drug registration template carries review thresholds", async () 
   assert.equal(r.data.summary.overall_status, "needs_attention");
   assert.equal(r.data.summary.alert, false);
   assert.deepEqual(r.data.summary.alert_reasons, []);
+  assert.equal((await a("DELETE", `/api/projects/${r.data.project.id}`)).status, 200);
+});
+
+await step("DMF RTF checklists: refuse-to-file verdict and 不適用 with a reason", async () => {
+  const schemas = (await a("GET", "/api/schemas")).data.schemas;
+  for (const [key, n] of [["dmf_rtf_full", 11], ["dmf_rtf_reference", 8], ["dmf_rtf_lean", 8], ["dmf_rtf_cep", 5]]) {
+    assert.equal(schemas.find((s) => s.key === key)?.item_count, n, key);
+  }
+  let r = await a("POST", "/api/projects", { name: "DMF 查檢表一", schema_type: "dmf_rtf_full" });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  const pid = r.data.project.id;
+  assert.equal(r.data.rtf.verdict, "refuse");
+  assert.deepEqual(r.data.rtf.rules.map((x) => [x.failures.length, x.max_failures]), [[6, 0], [5, 2]]);
+  const byKey = Object.fromEntries(r.data.items.map((i) => [i.item_key, i]));
+
+  // 不適用 needs a reason in the notes.
+  assert.equal((await a("PATCH", `/api/items/${byKey.dmf1_intermediate.id}`, { status: "not_applicable" })).status, 400);
+  r = await a("PATCH", `/api/items/${byKey.dmf1_intermediate.id}`, { status: "not_applicable", notes: "不適用原因：一步合成，無可分離中間體" });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.items.find((i) => i.item_key === "dmf1_intermediate").risk_level, "low");
+
+  // Items 1–6 done; of 7–11, two done, one N/A and two still open (「否」= 2, limit 2) → 續審.
+  for (const k of ["dmf1_rtf_form", "dmf1_ctd_32s", "dmf1_language", "dmf1_single_spec", "dmf1_spec_coa", "dmf1_stability",
+    "dmf1_process", "dmf1_starting_material"]) {
+    r = await a("PATCH", `/api/items/${byKey[k].id}`, { status: "completed" });
+  }
+  assert.equal(r.data.rtf.verdict, "continue");
+  assert.deepEqual(r.data.rtf.rules.map((x) => x.failures.length), [0, 2]);
+  assert.equal(r.data.summary.not_applicable, 1);
+  assert.equal(r.data.summary.completion_rate, 80);   // 8 of the 10 applicable items
+
+  // A third「否」among 7–11 → 退件.
+  r = await a("PATCH", `/api/items/${byKey.dmf1_process.id}`, { status: "blocked" });
+  assert.equal(r.data.rtf.verdict, "refuse");
+  assert.equal(r.data.rtf.rules[1].refused, true);
+  r = await a("PATCH", `/api/items/${byKey.dmf1_process.id}`, { status: "completed" });
+  assert.equal(r.data.rtf.verdict, "continue");
+
+  // One gate item back to in progress → 退件.
+  r = await a("PATCH", `/api/items/${byKey.dmf1_stability.id}`, { status: "in_progress" });
+  assert.equal(r.data.rtf.verdict, "refuse");
+  assert.deepEqual(r.data.rtf.rules[0].failures.map((f) => f.item_id), [byKey.dmf1_stability.id]);
+
+  // Schemas without RTF rules carry no verdict.
+  assert.equal((await a("GET", `/api/projects/${projectId}`)).data.rtf, null);
+  assert.equal((await a("DELETE", `/api/projects/${pid}`)).status, 200);
+});
+
+await step("PMF template: 確效替代 replaces Form C-5 through 不適用", async () => {
+  let r = await a("POST", "/api/projects", { name: "PMF 生物簡化", schema_type: "pmf_bio_simplified" });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  assert.equal(r.data.items.length, 26);
+  assert.equal(r.data.rtf, null);
+  const c5 = r.data.items.find((i) => i.item_key === "pmf_c5");
+  const alt = r.data.items.find((i) => i.item_key === "val_alternative");
+  assert.equal(alt.required, false);
+  r = await a("PATCH", `/api/items/${c5.id}`, { status: "not_applicable", notes: "不適用原因：採確效替代" });
+  assert.equal(r.status, 200);
+  r = await a("PATCH", `/api/items/${alt.id}`, { status: "completed" });
+  assert.equal(r.data.summary.not_applicable, 1);
+  assert.equal(r.data.summary.completed, 1);
   assert.equal((await a("DELETE", `/api/projects/${r.data.project.id}`)).status, 200);
 });
 

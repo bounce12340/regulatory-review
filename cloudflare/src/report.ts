@@ -10,7 +10,7 @@
  * doesn't turn everything red.
  */
 
-import { findTemplateItem, type ItemStatus, type RiskLevel } from "./schemas";
+import { findTemplateItem, SCHEMAS, type ItemStatus, type RiskLevel } from "./schemas";
 
 export interface ItemRow {
   id: number;
@@ -52,6 +52,8 @@ export interface ActionItem {
 export interface ReportSummary {
   total: number;
   completed: number;
+  /** Items marked「不適用」: resolved without a document, so left out of the completion rate. */
+  not_applicable: number;
   high_risk_items: number;
   blocked_items: number;
   completion_rate: number; // 0–100, one decimal
@@ -64,8 +66,8 @@ export interface ReportSummary {
   risk_counts: Record<RiskLevel, number>;
 }
 
-export function alertReasons(completed: number, total: number, blocked: number, daysLeft: number | null): AlertReason[] {
-  if (total === 0 || completed === total) return [];
+export function alertReasons(resolved: number, total: number, blocked: number, daysLeft: number | null): AlertReason[] {
+  if (total === 0 || resolved === total) return [];
   const reasons: AlertReason[] = [];
   if (daysLeft !== null && daysLeft < 0) reasons.push("overdue");
   else if (daysLeft !== null && daysLeft < DUE_SOON_DAYS) reasons.push("due_soon");
@@ -99,7 +101,7 @@ export function summarize(
   items: ItemRow[], deadline: string | null, today: string = todayTaipei(), active = true,
 ): ReportSummary {
   const status_counts: Record<ItemStatus, number> = {
-    pending: 0, in_progress: 0, under_review: 0, blocked: 0, completed: 0,
+    pending: 0, in_progress: 0, under_review: 0, blocked: 0, completed: 0, not_applicable: 0,
   };
   const risk_counts: Record<RiskLevel, number> = { low: 0, medium: 0, high: 0 };
   for (const i of items) {
@@ -108,13 +110,18 @@ export function summarize(
   }
   const total = items.length;
   const completed = status_counts.completed;
-  const rate = total ? Math.round((completed / total) * 1000) / 10 : 0;
+  const not_applicable = status_counts.not_applicable;
+  // Not-applicable items are out of scope, so they leave the denominator; with none, this
+  // is the same completed / total that review.py uses.
+  const inScope = total - not_applicable;
+  const rate = inScope ? Math.round((completed / inScope) * 1000) / 10 : total ? 100 : 0;
   const days_left = deadline ? daysBetween(today, deadline) : null;
   // Closed and archived cases are no longer being worked on, so they never raise an alert.
-  const alert_reasons = active ? alertReasons(completed, total, status_counts.blocked, days_left) : [];
+  const alert_reasons = active ? alertReasons(completed + not_applicable, total, status_counts.blocked, days_left) : [];
   return {
     total,
     completed,
+    not_applicable,
     high_risk_items: risk_counts.high,
     blocked_items: status_counts.blocked,
     completion_rate: rate,
@@ -129,11 +136,45 @@ export function summarize(
 
 export function actionItems(schemaType: string, items: ItemRow[]): ActionItem[] {
   return items
-    .filter((i) => i.status !== "completed")
+    .filter((i) => i.status !== "completed" && i.status !== "not_applicable")
     .map((i) => ({
       item_id: i.id,
       item: i.item_name,
       priority: i.risk_level === "high" ? "high" : "medium",
       action: findTemplateItem(schemaType, i.item_key)?.action_zh ?? "完成所需文件並更新狀態",
     }));
+}
+
+export interface RtfRuleResult {
+  rule: string;
+  max_failures: number;
+  /** Items currently judged「否」under this rule. */
+  failures: Array<{ item_id: number | null; item: string }>;
+  refused: boolean;
+}
+
+export interface RtfVerdict {
+  /** What TFDA's refuse-to-file check would decide if the case were submitted as it stands. */
+  verdict: "refuse" | "continue";
+  rules: RtfRuleResult[];
+}
+
+/**
+ * Applies a schema's RTF rules (e.g. 查檢表一: any「否」in items 1–6, or three or more in
+ * items 7–11, means 退件). An item counts as「是」when completed or marked not applicable;
+ * anything else — including a template item missing from the case — counts as「否」.
+ */
+export function rtfVerdict(schemaType: string, items: ItemRow[]): RtfVerdict | null {
+  const rules = SCHEMAS[schemaType]?.rtf_rules;
+  if (!rules?.length) return null;
+  const byKey = new Map(items.filter((i) => i.item_key).map((i) => [i.item_key!, i]));
+  const results = rules.map((r) => {
+    const failures = r.items.flatMap((key) => {
+      const row = byKey.get(key);
+      if (row && (row.status === "completed" || row.status === "not_applicable")) return [];
+      return [{ item_id: row?.id ?? null, item: row?.item_name ?? findTemplateItem(schemaType, key)?.label ?? key }];
+    });
+    return { rule: r.rule, max_failures: r.max_failures, failures, refused: failures.length > r.max_failures };
+  });
+  return { verdict: results.some((r) => r.refused) ? "refuse" : "continue", rules: results };
 }

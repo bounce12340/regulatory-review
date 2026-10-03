@@ -1,6 +1,6 @@
 // Case management: ledger of cases, create from TFDA template, edit, close, archive, delete.
 import { h, mount, toast, formData, busy, confirmDialog, field } from "../lib/dom.js";
-import { api, state, canEdit, isAdmin, refreshProjects, overallTag, PROJECT_STATUS_LABEL, OVERALL_LABEL } from "../lib/api.js";
+import { api, state, canEdit, isAdmin, refreshProjects, overallTag, groupSchemas, PROJECT_STATUS_LABEL, OVERALL_LABEL } from "../lib/api.js";
 import { countStrip } from "../lib/charts.js";
 
 export async function renderProjects(main, _params, ctx) {
@@ -70,7 +70,7 @@ function row(p, reload) {
       h("div", { class: "item-sub" }, p.schema_name)),
     h("td", { style: "min-width:150px;vertical-align:middle" },
       countStrip(p.summary.status_counts, { mini: true }),
-      h("div", { class: "item-sub" }, `${p.summary.completed} ／ ${p.summary.total} 份完成`)),
+      h("div", { class: "item-sub" }, `${p.summary.completed} ／ ${p.summary.total - (p.summary.not_applicable ?? 0)} 份完成`)),
     h("td", { class: "nowrap" }, p.deadline ?? "未設定"),
     h("td", {}, p.status === "active"
       ? h("span", overallTag(p.summary), OVERALL_LABEL[p.summary.overall_status])
@@ -130,7 +130,8 @@ function editDialog(p, reload) {
 
 function createForm(reload, ctx) {
   const schemaSelect = h("select", { class: "input", name: "schema_type", onchange: () => updateHelp() },
-    state.schemas.map((s) => h("option", { value: s.key }, `${s.name_zh}（${s.item_count} 份文件）`)));
+    groupSchemas(state.schemas).map((g) => h("optgroup", { label: g.label },
+      g.items.map((s) => h("option", { value: s.key }, `${s.name_zh}（${s.item_count} 份文件）`)))));
   const deadlineField = field("截止日", h("input", { class: "input", name: "deadline", type: "date" }));
   const help = h("span", { class: "help" });
   deadlineField.appendChild(help);
