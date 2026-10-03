@@ -55,21 +55,21 @@ export async function renderCompare(main, _params, ctx) {
   mount(main,
     head("案件比較", "所有進行中的案件並列；點開下方明細可看每份文件的狀態。"),
     h("section", { class: "sheet" },
-      h("div", { class: "table-wrap" }, h("table", {},
+      h("div", { class: "table-wrap" }, h("table", { class: "compare" },
         h("thead", {}, h("tr", {}, ["案件", "文件狀態", "完成", "高風險", "截止日", "整體"].map((t) => h("th", {}, t)))),
         h("tbody", {}, projects.map((p) => h("tr", {},
-          h("td", {}, h("a", { href: `#/overview/${p.id}`, class: "item-name" }, p.name), h("div", { class: "item-sub" }, p.schema_name)),
-          h("td", { style: "min-width:160px;vertical-align:middle" }, countStrip(p.summary.status_counts, { mini: true })),
-          h("td", { class: "nowrap" }, `${p.summary.completed} ／ ${p.summary.total - (p.summary.not_applicable ?? 0)}`),
-          h("td", {}, p.summary.high_risk_items
+          h("td", { class: "k-name" }, h("a", { href: `#/overview/${p.id}`, class: "item-name" }, p.name), h("div", { class: "item-sub" }, p.schema_name)),
+          h("td", { class: "k-strip" }, countStrip(p.summary.status_counts, { mini: true })),
+          h("td", { class: "nowrap k-done" }, `${p.summary.completed} ／ ${p.summary.total - (p.summary.not_applicable ?? 0)}`),
+          h("td", { class: "k-risk" }, p.summary.high_risk_items
             ? h("span", { class: p.summary.alert ? "risk high" : "nowrap" }, p.summary.high_risk_items)
             : h("span", { class: "muted" }, "0")),
-          h("td", { class: "nowrap" }, p.deadline ?? "—",
+          h("td", { class: "nowrap k-due" }, p.deadline ?? "—",
             p.summary.days_left !== null ? h("div", {
               class: `item-sub${p.summary.alert_reasons.some((r) => r === "overdue" || r === "due_soon") ? " risk high" : ""}`,
             },
               p.summary.days_left < 0 ? `逾期 ${-p.summary.days_left} 天` : `剩 ${p.summary.days_left} 天`) : null),
-          h("td", {}, h("span", overallTag(p.summary), OVERALL_LABEL[p.summary.overall_status])),
+          h("td", { class: "k-tag" }, h("span", overallTag(p.summary), OVERALL_LABEL[p.summary.overall_status])),
         ))),
       )),
     ),
@@ -92,13 +92,13 @@ function detailsFor(p) {
         const d = await api("GET", `/api/projects/${p.id}`);
         mount(body,
           docStrip(d.items),
-          h("div", { class: "table-wrap", style: "margin-top:10px" }, h("table", {},
+          h("div", { class: "table-wrap", style: "margin-top:10px" }, h("table", { class: "doc-list" },
             h("thead", {}, h("tr", {}, ["文件", "狀態", "風險", "備註"].map((t) => h("th", {}, t)))),
             h("tbody", {}, d.items.map((i) => h("tr", {},
-              h("td", {}, i.item_name),
-              h("td", {}, h("span", { class: `status-text s-${i.status}` }, STATUS_LABEL[i.status])),
-              h("td", {}, h("span", { class: `risk ${i.risk_level}` }, RISK_LABEL[i.risk_level])),
-              h("td", { class: "small" }, i.notes ?? ""),
+              h("td", { class: "d-name" }, i.item_name),
+              h("td", { class: "d-status" }, h("span", { class: `status-text s-${i.status}` }, STATUS_LABEL[i.status])),
+              h("td", { class: "d-risk" }, h("span", { class: `risk ${i.risk_level}` }, RISK_LABEL[i.risk_level])),
+              h("td", { class: "small d-notes" }, i.notes ?? ""),
             ))))));
       } catch (err) {
         loaded = false;

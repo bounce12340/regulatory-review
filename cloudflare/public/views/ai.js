@@ -64,7 +64,7 @@ export async function renderAi(main, _params, ctx) {
     ondragleave: () => drop.classList.remove("drag"),
     ondrop: (e) => { e.preventDefault(); drop.classList.remove("drag"); pick(e.dataTransfer.files[0]); },
   },
-    h("strong", {}, "選擇或拖曳文件到這裡"),
+    h("strong", {}, h("span", { class: "hover-only" }, "選擇或拖曳文件到這裡"), h("span", { class: "touch-only" }, "點這裡選擇文件")),
     h("div", { class: "small" }, "含文字的 PDF、Word .docx、Excel .xlsx、純文字，20 MB 以內（掃描檔請先做 OCR）"),
     fileLine,
   );

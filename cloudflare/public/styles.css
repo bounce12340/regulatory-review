@@ -541,7 +541,7 @@ dialog h2 { font-size: var(--t-xl); margin-bottom: 16px; }
 .dialog-actions { justify-content: flex-end; }
 
 @media print {
-  .sidebar, .topbar, .no-print, #toast { display: none !important; }
+  .sidebar, .topbar, .tabbar, .no-print, #toast { display: none !important; }
   .shell { display: block; }
   .main { padding: 0; max-width: none; }
   .case-body { grid-template-columns: 1fr; }
@@ -564,3 +564,62 @@ dialog h2 { font-size: var(--t-xl); margin-bottom: 16px; }
 .rtf-rules > li.refused .rtf-count { color: var(--seal); }
 .rtf-rules ul { margin: 6px 0 0; padding-left: 1.2em; font-size: var(--t-xs); color: var(--ink-2); display: grid; gap: 3px; }
 .rtf .help { margin: 12px 0 0; }
+
+/* ── Phone layout ──────────────────────────────────────────────────────
+   Below 900px the sidebar is a drawer, the top bar holds the case switcher and a tab bar
+   at the bottom carries the main pages. Below 700px tables turn into stacked cards. */
+.tabbar { display: none; }
+.touch-only { display: none; }
+table.compare .k-strip { min-width: 160px; vertical-align: middle; }
+@media (hover: none) { .hover-only { display: none; } .touch-only { display: inline; } }
+
+@media (max-width: 900px) {
+  .topbar { padding-top: calc(10px + env(safe-area-inset-top)); }
+  .topbar-case {
+    flex: 1; min-width: 0; font: inherit; font-weight: 600; color: var(--ink);
+    background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px; padding: 7px 8px;
+  }
+  .tabbar {
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 25;
+    background: var(--paper); border-top: 1px solid var(--rule);
+    padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  .tabbar a, .tabbar button {
+    display: flex; align-items: center; justify-content: center; min-height: 54px; padding: 0 2px;
+    font: inherit; font-size: var(--t-sm); color: var(--ink-2); text-decoration: none;
+    background: none; border: 0; border-top: 3px solid transparent; cursor: pointer;
+  }
+  .tabbar [aria-current="page"] { color: var(--ink); font-weight: 600; border-top-color: var(--seal); }
+  .main { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+  #toast { bottom: calc(68px + env(safe-area-inset-bottom)); }
+  /* iOS Safari zooms the page into any field under 16px. */
+  .input, .topbar-case, .status-select, .risk-select, td .input { font-size: 16px; }
+}
+
+@media (max-width: 700px) {
+  /* What needs doing comes before the long checklist. */
+  .case-body { display: flex; flex-direction: column; align-items: stretch; gap: 0; }
+  .rail { display: contents; }
+  .rail .rtf, .rail-todo { order: -1; }
+  .group-toggle { min-height: 48px; }
+  .status-select { min-height: 40px; }
+  .attach-add, .attachments .link-btn, .export-links .link-btn { min-height: 36px; display: inline-flex; align-items: center; }
+  table.checklist .notes:placeholder-shown:not(:focus) { min-height: 36px; }
+
+  table.compare thead, table.doc-list thead { display: none; }
+  table.compare tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; padding: 14px 0; border-bottom: 1px solid var(--rule); }
+  table.doc-list tr { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px 10px; padding: 10px 0; border-bottom: 1px solid var(--rule); }
+  table.compare td, table.doc-list td { padding: 0; border: 0; }
+  table.compare .k-name { grid-column: 1; }
+  table.compare .k-tag { grid-column: 2; grid-row: 1; }
+  table.compare .k-strip { grid-column: 1 / -1; min-width: 0; }
+  table.compare .k-done::before { content: "完成 "; color: var(--ink-2); }
+  table.compare .k-risk::before { content: "高風險 "; color: var(--ink-2); }
+  table.compare .k-done, table.compare .k-risk { font-size: var(--t-sm); }
+  table.compare .k-due { grid-column: 1 / -1; font-size: var(--t-sm); }
+  table.compare .k-due::before { content: "截止日 "; color: var(--ink-2); }
+  table.compare .k-due .item-sub { display: inline; margin-left: 8px; }
+  table.doc-list .d-notes { grid-column: 1 / -1; }
+  table.doc-list .d-notes:empty { display: none; }
+}

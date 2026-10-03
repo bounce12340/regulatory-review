@@ -165,7 +165,7 @@ function view(detail, filters, { onDetail, onFilter, animate }) {
 
       h("aside", { class: "rail" },
         detail.rtf ? rtfPanel(detail.rtf) : null,
-        h("section", { class: "sheet" },
+        h("section", { class: "sheet rail-time" },
           h("h2", { class: "sheet-title" }, "時程"),
           meter("文件完成度", summary.completion_rate),
           elapsed !== null && elapsed < TIMELINE_MIN_ELAPSED
@@ -176,7 +176,7 @@ function view(detail, filters, { onDetail, onFilter, animate }) {
                 behind ? "時程消耗已超過文件完成度，進度落後。" : "文件完成度跟得上時程。"),
             ],
         ),
-        h("section", { class: "sheet" },
+        h("section", { class: "sheet rail-todo" },
           h("h2", { class: "sheet-title" }, "待辦", h("span", { class: "aside" }, `${action_items.length} 項`)),
           todoList(action_items),
         ),
@@ -290,7 +290,8 @@ function checklistBodies(detail, filters, onDetail) {
     const done = g.items.filter(isResolved).length;
     const na = g.items.filter((i) => i.status === "not_applicable").length;
     const stateKey = `${detail.project.id}:${g.key}`;
-    const open = filtering || (sectionOpen.get(stateKey) ?? done < g.items.length);
+    // On a phone a 46-item checklist is a very long scroll, so sections start closed there.
+    const open = filtering || (sectionOpen.get(stateKey) ?? (done < g.items.length && !PHONE.matches));
     const headId = `grp-${g.key}`;
     const body = h("tbody", { class: open ? null : "collapsed", "aria-labelledby": headId },
       h("tr", { class: "group-row" }, h("th", { colspan: 6, scope: "rowgroup" },
@@ -310,6 +311,8 @@ function checklistBodies(detail, filters, onDetail) {
     return [body];
   });
 }
+
+const PHONE = matchMedia("(max-width: 700px)");
 
 // The count next to it already says it; keep the button's accessible name short.
 function decorative(el) {
