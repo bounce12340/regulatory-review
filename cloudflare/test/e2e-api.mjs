@@ -43,7 +43,7 @@ await step("public config + schemas", async () => {
   assert.equal(typeof cfg.data.ai_enabled, "boolean");
   const s = await a("GET", "/api/schemas");
   assert.deepEqual(s.data.schemas.map((x) => x.key).sort(),
-    ["dmf_rtf_cep", "dmf_rtf_full", "dmf_rtf_lean", "dmf_rtf_reference", "drug_registration_extension", "food_registration",
+    ["bse_application", "dmf_rtf_cep", "dmf_rtf_full", "dmf_rtf_lean", "dmf_rtf_reference", "drug_registration_extension", "food_registration",
       "gmp_onsite_inspection", "medical_device_registration", "new_drug_registration", "pmf_bio_full", "pmf_bio_simplified",
       "pmf_expansion", "pmf_nonsterile_full", "pmf_nonsterile_simplified", "pmf_quote_holder_new", "pmf_quote_nonholder_diff",
       "pmf_quote_same", "pmf_sterile_full", "pmf_sterile_simplified"]);

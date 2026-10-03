@@ -13,6 +13,7 @@
 #   pmf_quote_nonholder_diff, pmf_expansion
 #                                 (國外藥廠工廠資料 PMF 審查)
 #   gmp_onsite_inspection         (國外藥廠 GMP 實地查核申請)
+#   bse_application               (銜接性試驗評估 BSE)
 
 company:
   name: "UNIVERSAL INTEGRATED CORP."
@@ -448,6 +449,8 @@ schemas:
           - "檢附 BSE 查檢表與完整臨床資料包（complete clinical data package），最好含東亞人種資料。"
           - "免另案申請情形：小兒或少數嚴重疾病藥品認定、細胞／基因治療製劑，或已在國內執行具代表性且提供東亞人種 PK 之臨床試驗。"
           - "BSE 免除函不等於療效與安全性已被認可，仍以查驗登記完整審查為準。"
+          - "依112.12.13 衛授食字第1121413132號公告修正之「銜接性試驗基準」準備；BSE 申請請另建「銜接性試驗評估（BSE）」案件，逐項備齊附錄E 查檢表與自我評估報告。"
+          - "經評估不得免除者，須送銜接性試驗計畫書，審查同意後執行並將報告送備查（審查準則第22條之1）。"
       - key: m1_affidavit
         label: "M1 切結書（甲）（乙）"
         category: module1_admin
@@ -4227,3 +4230,214 @@ schemas:
           - "收到補件及繳費通知後於期限內繳費（因案而異，最長1個月）；因故需延後者提出展期申請。"
           - "第一次補件60天、第二次補件30天；查核結束後30天內發查廠缺失報告，原廠提出改善報告或申請展延。"
           - "不予核准者於4個月內提出申復；差旅費結算後通知退費或補繳。"
+
+  # ─── 銜接性試驗評估（BSE） ───────────────────────────────────────────────
+  # 來源：藥品查驗登記審查準則第22條之1；112.12.13 衛授食字第1121413132號公告修正之「銜接性試驗基準－
+  # 接受國外臨床數據之族群因素考量」（含附錄E 查檢表）及問答集；「銜接性試驗評估審查重點考量」（112.12）。
+  bse_application:
+    display_name: "Bridging Study Evaluation (BSE)"
+    display_name_zh: "銜接性試驗評估（BSE）"
+    deadline_default_days: 90
+    items:
+      - key: bse_scope
+        label: "申請前確認：是否須申請 BSE 與申請時點"
+        category: bse_check
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Confirm whether a bridging study evaluation is required and when to file"
+        action_zh: "確認是否須申請 BSE 及申請時點"
+        criteria:
+          - "新成分新藥及屬新成分之生物藥品，以及其他經公告應申請者，應申請銜接性試驗評估；已於我國進行對國人用藥安全性及有效性具代表性之臨床試驗，且能提供東亞人種藥物動力學資料者除外〔審查準則§22-1〕。"
+          - "經認定符合「小兒或少數嚴重疾病藥品審查認定要點」者，以及細胞治療、基因治療製劑，免申請〔審查準則§22-1〕。"
+          - "得於查驗登記前提出申請，或與查驗登記申請案同時申請〔審查準則§22-1〕。"
+          - "經評估免除銜接性試驗者，查驗登記得免附銜接性試驗資料，但療效與安全性仍須有充足之臨床試驗資料為依據〔審查準則§22-1〕。"
+      - key: bse_form_e
+        label: "附錄E 銜接性試驗評估查檢表"
+        category: bse_check
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Complete the Appendix E checklist with volume and page references"
+        action_zh: "逐項填寫附錄E 查檢表並標註冊數頁數"
+        criteria:
+          - "使用銜接性試驗基準附錄E（112.12.13 衛授食字第1121413132號公告修正），逐項勾選「有／無」並填寫資料冊數及頁數，必要時標示該頁段落；沒有的資料也要說明〔銜接性試驗基準112.12〕。"
+          - "依查檢表順序提供敘述性之整合摘要或簡述所附資料；M2.5 Clinical Overview 與 M2.7 Clinical Summary 為主〔銜接性試驗基準112.12〕。"
+          - "查檢表只供核對資料是否齊備；是否須執行銜接性試驗，仍視整體審查結果決定〔銜接性試驗基準112.12〕。"
+      - key: bse_i_trials
+        label: "Ⅰ 藥品之臨床試驗現況（完整臨床試驗列表）"
+        category: bse_check
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "List every completed, ongoing and planned clinical trial"
+        action_zh: "提供完整臨床試驗列表"
+        criteria:
+          - "列出所有已完成、執行中及預計執行之臨床試驗〔BSE審查重點考量112.12〕。"
+          - "在台灣或其他亞洲國家獨立執行（stand-alone）之試驗，以及有台灣或亞洲國家參與之跨區域臨床試驗（MRCT），特別註明並說明進度〔BSE審查重點考量112.12〕。"
+      - key: bse_ii_ccdp
+        label: "Ⅱ 完整臨床數據資料（CCDP）"
+        category: bse_check
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Provide the complete clinical data package"
+        action_zh: "提供完整臨床數據資料"
+        criteria:
+          - "含 CTD Module 2（所有符合我國要求之 Phase I～III 試驗資料，含藥動資料）及仿單擬稿，必要時另附 CTD Module 5〔BSE審查重點考量112.12〕。"
+          - "銜接性數據選自部分臨床試驗結果者，附數據來源之完整臨床試驗報告，以支持數據可信度〔銜接性試驗基準112.12〕。"
+          - "建立劑量－反應、療效及安全性之試驗依我國法規標準設計與執行（含對照藥品選擇、GCP）、為設計適當且良好之對照試驗，並採用合適之評估指標與我國可接受之診斷定義〔銜接性試驗基準112.12〕。"
+          - "NCE-2 仍依 CTD 格式整理，並將引用文獻分類（PK data、guidelines、review articles、case reports、clinical trials、observational studies、其他國家 assessment reports）〔BSE審查重點考量112.12〕。"
+          - "附中文仿單擬稿；僅有英文仿單擬稿或未能提供者，說明擬申請之中文適應症及用法用量〔BSE審查重點考量112.12〕。"
+      - key: bse_iii_east_asian
+        label: "Ⅲ 東亞族群之藥動學、安全性及療效資料"
+        category: bse_check
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Present East Asian PK, safety and efficacy data"
+        action_zh: "整理東亞族群藥動、安全與療效資料"
+        criteria:
+          - "東亞族群須在科學上能代表我國族群：中國、韓國、日本可代表；印度、巴基斯坦、斯里蘭卡、中東及西亞人種不可代表；居住歐美之亞裔受試者須考量外因性差異，並注意如 B 型肝炎帶原等內外因性差異〔BSE審查重點考量112.12〕。"
+          - "說明銜接性數據資料（BDP）來源：銜接性試驗、東亞第二期試驗（劑量反應趨勢）、MRCT 東亞次族群分析或東亞第三期試驗〔BSE審查重點考量112.12〕。"
+          - "MRCT 列出各試驗東亞族群之來源國家、人數及比例（n/N, %）與總和；獨立東亞試驗簡述設計與人數；人數過少者可合併（pooling）或分國比較，必要時另附我國族群獨立分析〔BSE審查重點考量112.12〕。"
+      - key: bse_iv_pk
+        label: "Ⅳ 東西方族群比較：藥動／藥效"
+        category: bse_check
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Compare East Asian and non-East Asian PK/PD"
+        action_zh: "比較東西方族群之藥動／藥效"
+        criteria:
+          - "以東亞與非東亞族群分組比較為優先（全試驗族群與非東亞比例相近時，可比較東亞與全試驗族群）；除主成分外，納入具臨床相關性之分析物（如活性代謝物）〔BSE審查重點考量112.12〕。"
+          - "試驗內比較以列表與描述性統計呈現；跨試驗比較所選試驗之設計、劑量／頻率、劑型、受試者背景、分析方法及參數定義須相近，並以相同給藥狀態（單次或穩態）比較〔BSE審查重點考量112.12〕。"
+          - "pop-PK 報告含人種及國家資訊（東亞占比 >10% 可信度較高），剔除無法代表我國族群之數據，並提供模擬參數（如 AUCtau,ss、Cmax,ss）數值與族群差異〔BSE審查重點考量112.12〕。"
+          - "以東西方目標病人族群、涵蓋臨床最大治療劑量、重複給藥穩態之數據為最重要比較；不宜以體重標準化比較；有差異者分析原因（體重、代謝酵素基因多型性等）及臨床相關性〔BSE審查重點考量112.12〕。"
+          - "生物製劑另比較東亞與非東亞之抗藥抗體（ADA）發生率；PEG 修飾藥品比較抗 PEG 抗體發生率〔BSE審查重點考量112.12〕。"
+      - key: bse_iv_clinical
+        label: "Ⅳ 東西方族群比較：療效與安全性"
+        category: bse_check
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Compare East Asian and non-East Asian efficacy and safety"
+        action_zh: "比較東西方族群之療效與安全性"
+        criteria:
+          - "資料來源為劑量尋找試驗及樞紐試驗；東亞人數足夠者採試驗內比較，分散於多個 MRCT 者合併後跨試驗比較，所選試驗之設計、劑量、劑型、受試者背景、療效指標定義與追蹤期須相近〔BSE審查重點考量112.12〕。"
+          - "製表比較東亞與非東亞族群，及東亞與整體（overall／ITT）族群之一致性；一併比較基準特徵、劑量、曝藥及追蹤時間〔BSE審查重點考量112.12〕。"
+          - "療效比較含主要療效指標及納入統計分析之關鍵次要指標；抗生素提供我國 MIC 資料，抗病毒藥評估我國主要流行病毒株之療效；安全性可用 subject-time 校正曝藥時間〔BSE審查重點考量112.12〕。"
+      - key: bse_v_sensitivity
+        label: "Ⅴ 12 項族群敏感性自我評估"
+        category: bse_check
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Answer the 12 ethnic-sensitivity questions with references"
+        action_zh: "完成 12 項族群敏感性自我評估"
+        criteria:
+          - "逐題回答「是／否／未知」並附引用依據或文獻：(1) 非線性藥動學 (2) 驟升之藥效學曲線 (3) 治療劑量範圍狹窄 (4) 高度代謝、單一途徑、交互作用風險 (5) 經具族群差異之基因多形性酵素代謝 (6) 前驅藥經具族群差異之酵素轉換 (7) 生體可用率個體差異大 (8) 生體可用率低、易受飲食影響 (9) 常需與多種藥物併用 (10) 易被不當使用 (11) 主要試驗族群與我國適應症族群之流行病學差異 (12) 醫療行為等其他族群敏感因素〔銜接性試驗基準112.12〕。"
+          - "此自我評估只判斷族群敏感性可能性高低，不能取代項目Ⅲ、Ⅳ 之資料；法規單位仍依 BDP 決定是否須執行銜接性試驗〔BSE審查重點考量112.12〕。"
+      - key: bse_vi_postmarketing
+        label: "Ⅵ 藥品上市後安全性資料"
+        category: bse_check
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Summarize post-marketing safety and attach PSUR/PBRER"
+        action_zh: "摘要上市後安全性並附 PSUR／PBRER"
+        criteria:
+          - "已於他國上市者，依 PSUR、PBRER 或其他安全性資訊，於自我評估報告摘要上市後新增之重要安全性警訊，並附 PSUR、PBRER 完整報告及引用資料〔BSE審查重點考量112.12〕。"
+          - "尚未於任何國家上市者，本項標記「不適用」並寫明原因（推論：查檢表以「有／無」作答）。"
+      - key: bse_vii_five_year
+        label: "Ⅶ 十大先進國上市滿五年之新成分新藥：國內臨床試驗資訊"
+        category: bse_check
+        required: false
+        risk_rules:
+          completed: low
+          default: medium
+        action: "Provide domestic trial information for products marketed five years in reference countries"
+        action_zh: "提供國內臨床試驗資訊（上市滿五年者）"
+        criteria:
+          - "預計依111.09.30 衛授食字第1111407703號公告「已在十大醫藥先進國核准上市滿五年，但屬國內新成分新藥（不包括生物藥品），辦理查驗登記審查重點」辦理者填寫〔銜接性試驗基準112.12〕。"
+          - "本品曾執行國內臨床試驗者，附衛生福利部計畫書准予執行公文（計畫編號、核准日期）。"
+          - "有相同成分藥品於國內執行臨床試驗者，附台灣藥物臨床試驗資訊網查詢結果（計畫編號、核准登錄日期）。"
+          - "不適用該審查重點者，本項標記「不適用」。"
+      - key: bse_viii_conclusion
+        label: "Ⅷ 自我總結評估"
+        category: bse_check
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Write the overall self-assessment and conclusion"
+        action_zh: "撰寫自我總結評估與結論"
+        criteria:
+          - "簡述主成分與作用機轉、宣稱適應症及用法用量、疾病背景、流行病學與現行治療；學名藥須列參考藥品與原開發廠並附連結資料（如 BE 報告）〔BSE審查重點考量112.12〕。"
+          - "簡述 BDP 來源、東亞族群總和人數及比例，人數過少者說明原因〔BSE審查重點考量112.12〕。"
+          - "說明東亞與非東亞之藥動差異及其臨床意義；療效與安全性差異之臨床意義，是否可藉調整國內用法用量處理，國人較高之安全性風險是否可預防、監測、處置或以劑量調整降低〔BSE審查重點考量112.12〕。"
+          - "綜合評估利害權衡（是否為嚴重疾患、有無替代療法、族群差異可否容忍），提出「是否須執行銜接性試驗」之結論〔BSE審查重點考量112.12〕。"
+      - key: bse_self_report
+        label: "BSE 自我評估報告（獨立報告）"
+        category: bse_report
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Write the standalone BSE self-assessment report"
+        action_zh: "撰寫獨立之 BSE 自我評估報告"
+        criteria:
+          - "另撰一份獨立之 BSE 自我評估報告，提供架構化整合性摘要〔BSE審查重點考量112.12〕。"
+          - "內容至少包括：主成分與作用機轉；宣稱適應症及用法用量；疾病背景、流行病學與現行治療；我國與歐美在致病成因、流行病學（好發族群、流行菌種或病毒株、癌症組織型態或受體表現）、診斷標準、標準治療與醫療行為之差異〔BSE審查重點考量112.12〕。"
+          - "並包括：美國、歐盟、日本、十大醫藥先進國及其他亞洲國家之送件與核准現況；完整臨床試驗列表；劑量尋找與樞紐試驗之設計、療效與安全性摘要；項目Ⅲ～Ⅵ 之資料；12 項自我評估；自我總結評估〔BSE審查重點考量112.12〕。"
+      - key: bse_study_protocol
+        label: "銜接性試驗計畫書（經評估不得免除時）"
+        category: bse_study
+        required: false
+        risk_rules:
+          completed: low
+          default: medium
+        action: "Draft and submit the bridging study protocol if one is required"
+        action_zh: "經要求時擬定並送審銜接性試驗計畫書"
+        criteria:
+          - "經評估不得免除者，依評估結果擬定銜接性試驗計畫書送審，審查同意後執行〔審查準則§22-1〕。"
+          - "試驗類型依族群敏感性與外因性因素決定：不需試驗；採藥理評估指標之藥效學試驗（同步測量藥動）；或於我國執行對照設計臨床試驗，通常為隨機、固定劑量之劑量－反應試驗（適用於劑量選擇有疑慮、缺乏接受國外對照試驗之經驗、醫療行為或併用藥品不同、我國對此類藥品不熟悉）〔銜接性試驗基準112.12〕。"
+          - "可簡化國外樞紐試驗之設計（減少人數、縮短期間或無對照組），並與國外樞紐試驗結果比較〔BSE審查重點考量112.12〕。"
+          - "以跨區域試驗作為銜接性試驗者，須在我國或東亞具說服力之結果：最佳為區域內統計顯著，其次為區域結果雖不顯著但趨勢一致；主要指標須明確定義並為各區域接受〔基準問答集〕。"
+          - "未被要求執行銜接性試驗者，本項標記「不適用」並註明 BSE 評估結果。"
+      - key: bse_safety_bridging
+        label: "安全性銜接資料（有安全性疑慮時）"
+        category: bse_study
+        required: false
+        risk_rules:
+          completed: low
+          default: medium
+        action: "Provide bridging safety data when there is a safety concern"
+        action_zh: "有安全性疑慮時提供安全性銜接資料"
+        criteria:
+          - "估計我國常見不良事件發生率並偵測嚴重不良事件；偵測約 1% 發生率之事件通常需評估約 300 位病人〔銜接性試驗基準112.12〕。"
+          - "可由療效銜接性試驗收集，或在其前執行小規模安全性試驗；國外資料有指標性嚴重不良事件、發生率可能有差異，或療效銜接性試驗之安全性數據不足時，執行獨立之安全性試驗〔銜接性試驗基準112.12〕。"
+          - "無安全性疑慮或未被要求者，本項標記「不適用」並寫明原因。"
+      - key: bse_study_report
+        label: "銜接性試驗報告備查"
+        category: bse_study
+        required: false
+        risk_rules:
+          completed: low
+          default: medium
+        action: "File the bridging study report after completion"
+        action_zh: "試驗完成後送交報告備查"
+        criteria:
+          - "試驗完成後，將試驗報告及相關資料送交中央衛生主管機關備查〔審查準則§22-1〕。"
+          - "判讀原則：劑量－反應、安全性和療效與國外相似者即可銜接；以不同劑量得相似結果者，可在有藥動或藥效依據下調整劑量後外推；樣本數不足以外推安全性者需額外安全性數據；無法證實安全性及療效者可能需確認性臨床試驗〔銜接性試驗基準112.12〕。"
+          - "於國內完成銜接性試驗並經核准之新藥，自發證日起5年內，相同成分、劑型、劑量之學名藥須另附相同標準之國內銜接性試驗報告〔審查準則§22-1〕。"
+          - "未執行銜接性試驗者，本項標記「不適用」。"

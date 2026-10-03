@@ -79,6 +79,15 @@ describe("SCHEMAS mirrors config/regulatory_schemas.yaml", () => {
     }
   });
 
+  it("BSE template follows Appendix E, with the bridging study itself only when required", () => {
+    const bse = SCHEMAS.bse_application;
+    const labels = bse.items.filter((i) => i.category === "bse_check").map((i) => i.label);
+    for (const roman of ["Ⅰ", "Ⅱ", "Ⅲ", "Ⅳ", "Ⅴ", "Ⅵ", "Ⅶ", "Ⅷ"]) expect(labels.some((l) => l.startsWith(roman)), roman).toBe(true);
+    // A bridging study is needed only when TFDA does not waive it, so those items are 依適用性.
+    expect(bse.items.filter((i) => i.category === "bse_study").every((i) => !i.required)).toBe(true);
+    for (const i of bse.items) expect(i.criteria?.length, i.key).toBeGreaterThan(0);
+  });
+
   it("every item has a Chinese action and a default risk", () => {
     for (const s of Object.values(SCHEMAS)) {
       for (const i of s.items) {

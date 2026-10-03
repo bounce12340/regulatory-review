@@ -33,6 +33,10 @@ const GROUPS = [
   { key: "pmf_mode", label: "申請方式應附文件（簡化／確效替代）", cats: ["pmf_mode"] },
   { key: "pmf_c", label: "表C-2～C-5 技術查核表", cats: ["pmf_form_c"] },
   { key: "gmp_onsite", label: "實地查核申請文件", cats: ["gmp_onsite"] },
+  // 銜接性試驗評估（BSE）: Appendix E items, the self-assessment report, then the study if one is required.
+  { key: "bse_check", label: "附錄E 查檢表（Ⅰ～Ⅷ）", cats: ["bse_check"] },
+  { key: "bse_report", label: "BSE 自我評估報告", cats: ["bse_report"] },
+  { key: "bse_study", label: "銜接性試驗（經評估須執行時）", cats: ["bse_study"] },
   // 原料藥／DMF RTF checklists: sections follow the refuse-to-file rules, so row numbers
   // stay the same as the numbering on TFDA's form.
   { key: "rtf_gate", label: "退件關鍵項", cats: ["rtf_gate"] },
