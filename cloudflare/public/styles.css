@@ -208,10 +208,13 @@ button, input, select, textarea { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) { .seal { animation: none; } }
 
 @media (max-width: 640px) {
+  /* The stamp stays on the dossier's corner; only the heading lines make room for it. */
   .case { padding-right: 0; }
-  .seal { position: static; width: 92px; height: 92px; margin-bottom: 14px; }
-  .seal-text { font-size: 1.6rem; }
+  .case-type, .case-title { padding-right: 84px; }
+  .seal { right: 0; top: -2px; width: 74px; height: 74px; border-width: 3px; box-shadow: inset 0 0 0 2px var(--paper), inset 0 0 0 4px currentColor; }
+  .seal-text { font-size: 1.3rem; }
   .case-title { font-size: var(--t-2xl); }
+  .facts { gap: 10px 24px; }
 }
 
 /* ── Document strip: one block per checklist item ──────────────────── */
@@ -253,17 +256,27 @@ td .notes { min-width: 180px; }
 @media (max-width: 700px) { .filters { grid-template-columns: 1fr 1fr; } .filters .search { grid-column: 1 / -1; } }
 
 @media (max-width: 700px) {
+  /* A checklist row becomes a document card: the name gets the full width, status and risk
+     sit on the line below it, then thresholds, attachments and notes. The name cell is
+     flattened (display: contents) so its parts can take their own rows in the grid. */
   table.checklist thead { display: none; }
-  table.checklist tr { display: grid; grid-template-columns: 1.6em minmax(0, 1fr) auto auto; gap: 8px 10px; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+  table.checklist tr { display: grid; grid-template-columns: 1.6em minmax(0, 1fr) auto; gap: 6px 10px; padding: 14px 0; border-bottom: 1px solid var(--rule); align-items: center; }
   table.checklist tbody tr:last-child { border-bottom: 1px solid var(--ink); }
   table.checklist td { padding: 0; border: 0; }
   table.checklist tbody tr:last-child td { border: 0; }
-  table.checklist .c-seq { grid-row: span 3; }
-  table.checklist .c-status { grid-column: 3; grid-row: 1; }
-  table.checklist .c-risk { grid-column: 4; grid-row: 1; padding-top: 4px; }
-  table.checklist .c-notes, table.checklist .c-act { grid-column: 2 / -1; }
+  table.checklist .c-seq { grid-column: 1; grid-row: 1; align-self: start; padding-top: 2px; }
+  table.checklist .c-name { display: contents; }
+  table.checklist .c-name .item-name { grid-column: 2 / -1; grid-row: 1; }
+  table.checklist .c-name .item-sub { grid-column: 2 / -1; grid-row: 2; margin-top: -4px; }
+  table.checklist .c-status { grid-column: 2; grid-row: 3; }
+  table.checklist .c-risk { grid-column: 3; grid-row: 3; }
+  table.checklist .c-name .criteria { grid-column: 2 / -1; grid-row: 4; margin-top: 0; }
+  table.checklist .c-name .attachments { grid-column: 2 / -1; grid-row: 5; margin-top: 0; }
+  table.checklist .c-notes { grid-column: 2 / -1; grid-row: 6; }
+  table.checklist .c-act { grid-column: 2 / -1; grid-row: 7; }
   table.checklist .c-act:empty { display: none; }
   table.checklist td .notes { min-width: 0; }
+  table.checklist .status-select { width: 100%; max-width: 15em; }
   /* An empty notes field reads as a quiet link until tapped, so each row stays short. */
   table.checklist .notes:placeholder-shown:not(:focus) {
     border-color: transparent; background: transparent; padding: 0; min-height: 0; height: auto;
@@ -595,6 +608,22 @@ table.compare .k-strip { min-width: 160px; vertical-align: middle; }
   #toast { bottom: calc(68px + env(safe-area-inset-bottom)); }
   /* iOS Safari zooms the page into any field under 16px. */
   .input, .topbar-case, .status-select, .risk-select, td .input { font-size: 16px; }
+  /* Touch sizes: 44px for fields and buttons, 40px for small buttons, 20px checkboxes. */
+  :root { --t-xs: .85rem; }
+  .input, .btn, .topbar-case { min-height: 44px; }
+  .btn-sm { min-height: 40px; padding: 6px 14px; font-size: var(--t-sm); }
+  .status-select, .risk-select { min-height: 44px; }
+  input[type="checkbox"] { width: 20px; height: 20px; }
+  .check { min-height: 44px; }
+  .sidebar-foot .link-row { gap: 0 20px; }
+  .sidebar-foot .link-row > * { min-height: 44px; display: inline-flex; align-items: center; font-size: var(--t-sm); }
+  .nav a { padding-top: 12px; padding-bottom: 12px; }
+  /* Case names in the timeline and comparison are the way into a case. */
+  .gantt a, table.compare .item-name, table.ledger .ledger-name { display: inline-block; padding: 6px 0; }
+  .criteria > summary { padding: 8px 0; }
+  /* 46 documents must fit a 320px screen. */
+  .strip { gap: 2px; }
+  .strip span { min-width: 2px; }
 }
 
 @media (max-width: 700px) {
@@ -603,7 +632,6 @@ table.compare .k-strip { min-width: 160px; vertical-align: middle; }
   .rail { display: contents; }
   .rail .rtf, .rail-todo { order: -1; }
   .group-toggle { min-height: 48px; }
-  .status-select { min-height: 40px; }
   .attach-add, .attachments .link-btn, .export-links .link-btn { min-height: 36px; display: inline-flex; align-items: center; }
   table.checklist .notes:placeholder-shown:not(:focus) { min-height: 36px; }
 
