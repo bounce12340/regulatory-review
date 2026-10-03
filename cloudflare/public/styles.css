@@ -272,6 +272,35 @@ td .notes { min-width: 180px; }
   table.checklist .notes:placeholder-shown:not(:focus)::placeholder { color: var(--link); opacity: 1; }
 }
 
+/* Case ledger on a phone: each case becomes a short card so the actions stay on screen. */
+table.ledger .l-docs { min-width: 150px; vertical-align: middle; }
+table.ledger .l-act .btn-row { justify-content: flex-end; }
+@media (max-width: 700px) {
+  table.ledger thead { display: none; }
+  table.ledger tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; padding: 14px 0; border-bottom: 1px solid var(--rule); }
+  table.ledger tbody tr:last-child { border-bottom: 1px solid var(--ink); }
+  table.ledger td, table.ledger tbody tr:last-child td { padding: 0; border: 0; }
+  table.ledger .l-name { grid-column: 1; }
+  table.ledger .l-status { grid-column: 2; grid-row: 1; }
+  table.ledger .l-docs { grid-column: 1 / -1; min-width: 0; }
+  table.ledger .l-due { grid-column: 1 / -1; font-size: var(--t-xs); color: var(--ink-2); }
+  table.ledger .l-due::before { content: "截止日 "; }
+  table.ledger .l-act { grid-column: 1 / -1; }
+  table.ledger .l-act .btn-row { justify-content: flex-start; }
+  table.ledger .l-act:empty { display: none; }
+}
+
+/* Member list on a phone: name and email on top, role and status controls below. */
+@media (max-width: 700px) {
+  table.members thead { display: none; }
+  table.members tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; padding: 14px 0; border-bottom: 1px solid var(--rule); align-items: center; }
+  table.members tbody tr:last-child { border-bottom: 1px solid var(--ink); }
+  table.members td, table.members tbody tr:last-child td { padding: 0; border: 0; }
+  table.members .m-email { grid-column: 1 / -1; overflow-wrap: anywhere; color: var(--ink-2); font-size: var(--t-sm); }
+  table.members .m-login { grid-column: 1 / -1; }
+  table.members .m-login::before { content: "最後登入 "; }
+}
+
 /* Checklist sections (CTD modules). Each section is its own <tbody>. */
 table.checklist tbody tr:last-child td { border-bottom-color: var(--rule); }
 table.checklist tbody:last-child tr:last-child td { border-bottom-color: var(--ink); }
