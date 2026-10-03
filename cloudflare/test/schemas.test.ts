@@ -19,12 +19,21 @@ describe("SCHEMAS mirrors config/regulatory_schemas.yaml", () => {
       expect(ts.display_name).toBe(ySchema.display_name);
       expect(ts.display_name_zh).toBe(ySchema.display_name_zh);
       expect(ts.deadline_default_days).toBe(ySchema.deadline_default_days);
-      expect(ts.items.map((i) => ({
+      // action_zh / criteria live in YAML only for newer schemas; compare them when present.
+      expect(ts.items.map((i, n) => ({
         key: i.key, label: i.label, category: i.category, required: i.required,
         risk_rules: i.risk_rules, action: i.action,
+        ...("action_zh" in ySchema.items[n] ? { action_zh: i.action_zh } : {}),
+        ...("criteria" in ySchema.items[n] ? { criteria: i.criteria } : {}),
       }))).toEqual(ySchema.items);
     });
   }
+
+  it("new drug registration items all carry review thresholds", () => {
+    const nda = SCHEMAS.new_drug_registration;
+    expect(nda.items.length).toBeGreaterThanOrEqual(30);
+    for (const i of nda.items) expect(i.criteria?.length, i.key).toBeGreaterThan(0);
+  });
 
   it("every item has a Chinese action and a default risk", () => {
     for (const s of Object.values(SCHEMAS)) {

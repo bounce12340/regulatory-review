@@ -1,9 +1,15 @@
-// In-browser text extraction for .docx / .xlsx / text files, with no third-party
-// libraries: Office files are ZIP archives of XML, so we unzip with the native
-// DecompressionStream and read the XML with DOMParser. PDFs are not parsed here —
-// they go to Claude as-is so scanned pages work too.
+// In-browser text extraction. The AI service (Ollama) only takes text, so every file is
+// turned into text here before upload:
+// - Office files are ZIP archives of XML: unzipped with the native DecompressionStream
+//   and read with DOMParser.
+// - PDFs go through pdf.js (served from /vendor/pdfjs), loaded only when a PDF is picked.
+//   Scanned PDFs have no text layer and are rejected with an explanation.
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
+// Keep in step with MAX_TEXT_CHARS in src/ai.ts.
+export const MAX_TEXT_CHARS = 100_000;
+// Fewer readable characters per page than this means the PDF is (mostly) scanned images.
+const MIN_CHARS_PER_PAGE = 20;
 
 export const ACCEPT = ".pdf,.docx,.xlsx,.txt,.md,.csv";
 
@@ -16,7 +22,7 @@ export async function prepareDocument(file) {
     if (!(buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46)) {
       throw new Error("這不是有效的 PDF 檔案。");
     }
-    return { kind: "pdf", pdf_base64: toBase64(buf), chars: null };
+    return textResult(await pdfText(buf));
   }
   if (ext === "docx") return textResult(await docxText(buf));
   if (ext === "xlsx") return textResult(await xlsxText(buf));
@@ -30,14 +36,49 @@ export async function prepareDocument(file) {
 function textResult(text) {
   const clean = text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   if (!clean) throw new Error("無法從檔案擷取到文字內容。");
-  return { kind: "text", text: clean, chars: clean.length };
+  if (clean.length > MAX_TEXT_CHARS) {
+    throw new Error(`文件文字有 ${clean.length.toLocaleString()} 字元，超過單次分析上限 ${MAX_TEXT_CHARS.toLocaleString()} 字元，請拆分後分次分析。`);
+  }
+  return { text: clean, chars: clean.length };
 }
 
-function toBase64(bytes) {
-  let bin = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  return btoa(bin);
+// ── PDF ─────────────────────────────────────────────────────────────────────
+
+async function pdfText(buf) {
+  const base = new URL("../vendor/pdfjs/", import.meta.url);
+  const pdfjs = await import(new URL("pdf.min.mjs", base).href);
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdf.worker.min.mjs", base).href;
+  const task = pdfjs.getDocument({
+    data: buf,
+    // CJK fonts in Taiwanese PDFs often need these maps to come out as real characters.
+    cMapUrl: new URL("cmaps/", base).href,
+    cMapPacked: true,
+    isEvalSupported: false,
+  });
+  let doc;
+  try {
+    doc = await task.promise;
+  } catch (err) {
+    await task.destroy();
+    if (err?.name === "PasswordException") throw new Error("這份 PDF 有密碼保護，請先解除密碼再上傳。");
+    throw new Error("無法讀取這份 PDF，檔案可能已損毀。");
+  }
+  const pages = [];
+  try {
+    for (let n = 1; n <= doc.numPages; n++) {
+      const page = await doc.getPage(n);
+      const { items } = await page.getTextContent();
+      pages.push(items.map((i) => (i.str ?? "") + (i.hasEOL ? "\n" : "")).join(""));
+      page.cleanup();
+    }
+  } finally {
+    await task.destroy();
+  }
+  const readable = pages.join("").replace(/\s/g, "").length;
+  if (readable < doc.numPages * MIN_CHARS_PER_PAGE) {
+    throw new Error("這份 PDF 幾乎沒有可擷取的文字，可能是掃描檔。AI 服務無法讀取圖片，請改上傳含文字的 PDF 或 Word 檔，或先做 OCR。");
+  }
+  return pages.map((t, i) => `【第 ${i + 1} 頁】\n${t.trim()}`).join("\n\n");
 }
 
 // ── ZIP ─────────────────────────────────────────────────────────────────────

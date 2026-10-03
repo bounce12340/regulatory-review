@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actionItems, daysBetween, overallStatus, summarize, todayTaipei, type ItemRow } from "../src/report";
+import { actionItems, alertReasons, daysBetween, overallStatus, summarize, todayTaipei, type ItemRow } from "../src/report";
 
 let nextId = 1;
 function item(status: ItemRow["status"], risk: ItemRow["risk_level"], key: string | null = null): ItemRow {
@@ -37,12 +37,39 @@ describe("summarize", () => {
     expect(s.high_risk_items).toBe(2);
     expect(s.overall_status).toBe("needs_attention");
     expect(s.days_left).toBe(30);
+    expect(s.blocked_items).toBe(1);
+    expect(s.alert_reasons).toEqual(["blocked"]);
     expect(s.status_counts).toEqual({ pending: 1, in_progress: 1, under_review: 1, blocked: 1, completed: 3 });
     expect(s.risk_counts).toEqual({ low: 3, medium: 2, high: 2 });
   });
 
   it("reports overdue deadlines as negative days", () => {
     expect(summarize([], "2026-09-25", "2026-10-01").days_left).toBe(-6);
+  });
+});
+
+describe("alert (red only when action is needed now)", () => {
+  it("does not flag a fresh case with low completion and a distant deadline", () => {
+    const s = summarize([item("pending", "high"), item("pending", "high")], "2027-04-01", "2026-10-01");
+    expect(s.overall_status).toBe("needs_attention");
+    expect(s.alert).toBe(false);
+    expect(s.alert_reasons).toEqual([]);
+  });
+  it("never flags a closed or archived case", () => {
+    const s = summarize([item("blocked", "high")], "2026-09-01", "2026-10-01", false);
+    expect(s.alert).toBe(false);
+  });
+  it.each([
+    [0, 5, 0, -3, ["overdue"]],
+    [0, 5, 0, 29, ["due_soon"]],
+    [0, 5, 0, 30, []],
+    [0, 5, 2, 200, ["blocked"]],
+    [1, 5, 1, -1, ["overdue", "blocked"]],
+    [5, 5, 0, -10, []],
+    [0, 0, 0, -10, []],
+    [0, 5, 0, null, []],
+  ])("completed %i/%i, blocked %i, days left %s → %j", (done, total, blocked, days, expected) => {
+    expect(alertReasons(done, total, blocked, days)).toEqual(expected);
   });
 });
 

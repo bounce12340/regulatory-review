@@ -9,7 +9,7 @@ import {
   clearSessionCookie, hashIterations, hashPassword, MAX_PBKDF2_ITERATIONS, MIN_PBKDF2_ITERATIONS, hashToken, newSessionToken, normalizeEmail,
   readSessionCookie, sessionCookie, slugify, validatePassword, verifyPassword,
 } from "./auth";
-import { AnalysisError, analyzeDocument, MAX_PDF_BYTES, MAX_TEXT_CHARS, type AiConfig } from "./ai";
+import { AnalysisError, analyzeDocument, MAX_TEXT_CHARS, type AiConfig } from "./ai";
 import { actionItems, summarize, todayTaipei, type ItemRow, type ProjectRow } from "./report";
 import {
   findTemplateItem, isSchemaType, ITEM_STATUSES, RISK_LEVELS, riskFor, SCHEMAS,
@@ -19,12 +19,12 @@ import {
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
-  ANTHROPIC_API_KEY?: string;
-  /** Optional: route through Cloudflare AI Gateway (https://gateway.ai.cloudflare.com/v1/<acct>/<gw>/anthropic). */
-  ANTHROPIC_BASE_URL?: string;
+  /** Secret: Ollama API key (https://ollama.com/settings/keys). AI analysis is off without it. */
+  OLLAMA_API_KEY?: string;
+  /** Ollama API base URL; defaults to Ollama's cloud (https://ollama.com). */
+  AI_BASE_URL?: string;
+  /** Ollama cloud model name, as listed by https://ollama.com/api/tags. */
   AI_MODEL?: string;
-  AI_EFFORT?: string;
-  USD_TO_TWD?: string;
   ALLOW_REGISTRATION?: string;
   SESSION_TTL_HOURS?: string;
   /** PBKDF2 iterations for new password hashes (10 000–100 000). See README for the CPU trade-off. */
@@ -48,7 +48,7 @@ class HttpError extends Error {
 }
 
 const MAX_JSON_BYTES = 64 * 1024;
-const MAX_AI_BYTES = Math.ceil(MAX_PDF_BYTES * 1.4) + 64 * 1024; // base64 overhead + envelope
+const MAX_AI_BYTES = MAX_TEXT_CHARS * 4 + 64 * 1024; // UTF-8 (≤4 bytes/char) + envelope
 const LOGIN_WINDOW_MINUTES = 15;
 const LOGIN_MAX_FAILURES = 10;
 
@@ -301,7 +301,10 @@ async function projectItems(env: Env, projectId: number): Promise<ItemRow[]> {
 function decorateItems(schemaType: string, items: ItemRow[]) {
   return items.map((i) => {
     const tpl = findTemplateItem(schemaType, i.item_key);
-    return { ...i, required: Boolean(i.required), auto_risk: Boolean(tpl), action: tpl?.action_zh ?? null };
+    return {
+      ...i, required: Boolean(i.required), auto_risk: Boolean(tpl),
+      action: tpl?.action_zh ?? null, criteria: tpl?.criteria ?? [],
+    };
   });
 }
 
@@ -310,7 +313,7 @@ async function projectDetail(env: Env, project: ProjectRow) {
   return {
     project: { ...project, schema_name: SCHEMAS[project.schema_type]?.display_name_zh ?? project.schema_type },
     items: decorateItems(project.schema_type, items),
-    summary: summarize(items, project.deadline),
+    summary: summarize(items, project.deadline, undefined, project.status === "active"),
     action_items: actionItems(project.schema_type, items),
   };
 }
@@ -341,7 +344,7 @@ async function listProjects(url: URL, env: Env, user: AuthUser): Promise<Respons
     projects: projects.map((p) => ({
       ...p,
       schema_name: SCHEMAS[p.schema_type]?.display_name_zh ?? p.schema_type,
-      summary: summarize(byProject.get(p.id) ?? [], p.deadline, today),
+      summary: summarize(byProject.get(p.id) ?? [], p.deadline, today, p.status === "active"),
     })),
   });
 }
@@ -549,38 +552,27 @@ async function updateUser(request: Request, env: Env, user: AuthUser, targetId: 
 // ── AI analysis ──────────────────────────────────────────────────────────────
 
 function aiConfig(env: Env): AiConfig | null {
-  if (!env.ANTHROPIC_API_KEY) return null;
-  const effort = (["low", "medium", "high", "xhigh", "max"] as const).find((e) => e === env.AI_EFFORT) ?? "high";
+  if (!env.OLLAMA_API_KEY) return null;
   return {
-    apiKey: env.ANTHROPIC_API_KEY,
-    baseURL: env.ANTHROPIC_BASE_URL || undefined,
-    model: env.AI_MODEL || "claude-opus-5-5",
-    effort,
-    usdToTwd: Number(env.USD_TO_TWD ?? "32") || 32,
+    apiKey: env.OLLAMA_API_KEY,
+    baseURL: env.AI_BASE_URL || "https://ollama.com",
+    model: env.AI_MODEL || "deepseek-v4.1-flash",
   };
 }
 
 async function analyze(request: Request, env: Env, user: AuthUser): Promise<Response> {
   requireRole(user, "admin", "member");
   const cfg = aiConfig(env);
-  if (!cfg) throw new HttpError(503, "AI 分析尚未啟用：管理員需設定 ANTHROPIC_API_KEY。");
+  if (!cfg) throw new HttpError(503, "AI 分析尚未啟用：管理員需設定 OLLAMA_API_KEY。");
   const body = await readJson(request, MAX_AI_BYTES);
   if (!isSchemaType(body.schema_type)) throw new HttpError(400, "不支援的申請類型。");
   const filename = str(body.filename, "檔案名稱", { max: 255 });
-
-  let input;
-  if (typeof body.pdf_base64 === "string") {
-    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(body.pdf_base64)) throw new HttpError(400, "PDF 資料格式錯誤。");
-    if (body.pdf_base64.length * 0.75 > MAX_PDF_BYTES) throw new HttpError(413, "PDF 超過 20 MB 上限。");
-    input = { kind: "pdf" as const, filename, base64: body.pdf_base64 };
-  } else {
-    const text = typeof body.text === "string" ? body.text.trim() : "";
-    if (!text) throw new HttpError(400, "文件內容為空，無法分析。");
-    if (text.length > MAX_TEXT_CHARS) {
-      throw new HttpError(413, `文件文字超過 ${MAX_TEXT_CHARS.toLocaleString()} 字元，請拆分後分次分析。`);
-    }
-    input = { kind: "text" as const, filename, text };
+  const text = typeof body.text === "string" ? body.text.trim() : "";
+  if (!text) throw new HttpError(400, "文件內容為空，無法分析。");
+  if (text.length > MAX_TEXT_CHARS) {
+    throw new HttpError(413, `文件文字超過 ${MAX_TEXT_CHARS.toLocaleString()} 字元，請拆分後分次分析。`);
   }
+  const input = { filename, text };
 
   try {
     return json(await analyzeDocument(cfg, body.schema_type, input));

@@ -1,6 +1,6 @@
 // Portfolio views: Gantt timeline across cases, and a side-by-side ledger.
 import { h, mount } from "../lib/dom.js";
-import { api, state, refreshProjects, timelineElapsed, STATUS_LABEL, RISK_LABEL, OVERALL_LABEL } from "../lib/api.js";
+import { api, state, refreshProjects, timelineElapsed, overallTag, STATUS_LABEL, RISK_LABEL, OVERALL_LABEL } from "../lib/api.js";
 import { gantt, countStrip, docStrip } from "../lib/charts.js";
 
 function head(title, sub) {
@@ -61,11 +61,15 @@ export async function renderCompare(main, _params, ctx) {
           h("td", {}, h("a", { href: `#/overview/${p.id}`, class: "item-name" }, p.name), h("div", { class: "item-sub" }, p.schema_name)),
           h("td", { style: "min-width:160px;vertical-align:middle" }, countStrip(p.summary.status_counts, { mini: true })),
           h("td", { class: "nowrap" }, `${p.summary.completed} ／ ${p.summary.total}`),
-          h("td", {}, p.summary.high_risk_items ? h("span", { class: "risk high" }, p.summary.high_risk_items) : h("span", { class: "muted" }, "0")),
+          h("td", {}, p.summary.high_risk_items
+            ? h("span", { class: p.summary.alert ? "risk high" : "nowrap" }, p.summary.high_risk_items)
+            : h("span", { class: "muted" }, "0")),
           h("td", { class: "nowrap" }, p.deadline ?? "—",
-            p.summary.days_left !== null ? h("div", { class: `item-sub${p.summary.days_left < 30 ? " risk high" : ""}` },
+            p.summary.days_left !== null ? h("div", {
+              class: `item-sub${p.summary.alert_reasons.some((r) => r === "overdue" || r === "due_soon") ? " risk high" : ""}`,
+            },
               p.summary.days_left < 0 ? `逾期 ${-p.summary.days_left} 天` : `剩 ${p.summary.days_left} 天`) : null),
-          h("td", {}, h("span", { class: `tag ${p.summary.overall_status}` }, OVERALL_LABEL[p.summary.overall_status])),
+          h("td", {}, h("span", overallTag(p.summary), OVERALL_LABEL[p.summary.overall_status])),
         ))),
       )),
     ),

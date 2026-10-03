@@ -1,6 +1,6 @@
 // Case management: ledger of cases, create from TFDA template, edit, close, archive, delete.
 import { h, mount, toast, formData, busy, confirmDialog, field } from "../lib/dom.js";
-import { api, state, canEdit, isAdmin, refreshProjects, PROJECT_STATUS_LABEL, OVERALL_LABEL } from "../lib/api.js";
+import { api, state, canEdit, isAdmin, refreshProjects, overallTag, PROJECT_STATUS_LABEL, OVERALL_LABEL } from "../lib/api.js";
 import { countStrip } from "../lib/charts.js";
 
 export async function renderProjects(main, _params, ctx) {
@@ -73,7 +73,7 @@ function row(p, reload) {
       h("div", { class: "item-sub" }, `${p.summary.completed} ／ ${p.summary.total} 份完成`)),
     h("td", { class: "nowrap" }, p.deadline ?? "未設定"),
     h("td", {}, p.status === "active"
-      ? h("span", { class: `tag ${p.summary.overall_status}` }, OVERALL_LABEL[p.summary.overall_status])
+      ? h("span", overallTag(p.summary), OVERALL_LABEL[p.summary.overall_status])
       : h("span", { class: "tag" }, PROJECT_STATUS_LABEL[p.status])),
     h("td", {}, editable ? h("div", { class: "btn-row", style: "justify-content:flex-end" },
       h("button", { class: "btn btn-sm", onclick: () => editDialog(p, reload) }, "編輯"),
@@ -81,13 +81,6 @@ function row(p, reload) {
         ? [h("button", { class: "btn btn-sm", onclick: () => setStatus("completed", "已結案") }, "結案"),
           h("button", { class: "btn btn-sm", onclick: () => setStatus("archived", "已封存") }, "封存")]
         : h("button", { class: "btn btn-sm", onclick: () => setStatus("active", "已恢復") }, "恢復"),
-      isAdmin() ? h("button", {
-        class: "btn btn-sm btn-danger",
-        onclick: async () => {
-          if (!(await confirmDialog(`永久刪除「${p.name}」與其所有文件項目？刪除後無法復原。`, { okLabel: "永久刪除", danger: true }))) return;
-          try { await api("DELETE", `/api/projects/${p.id}`); toast("已刪除"); await reload(); } catch (err) { toast(err.message, "error"); }
-        },
-      }, "刪除") : null,
     ) : null),
   );
 }
@@ -111,7 +104,20 @@ function editDialog(p, reload) {
       field("截止日", h("input", { class: "input", name: "deadline", type: "date", value: p.deadline ?? "" })),
       field("說明", h("textarea", { class: "input", name: "description", maxlength: 2000 }, p.description ?? "")),
       error,
-      h("div", { class: "btn-row", style: "justify-content:flex-end" },
+      h("div", { class: "btn-row dialog-actions" },
+        // Deleting is rare and permanent, so it lives here rather than on every ledger row.
+        isAdmin() ? h("button", {
+          class: "btn btn-danger", type: "button", style: "margin-right:auto",
+          onclick: async () => {
+            if (!(await confirmDialog(`永久刪除「${p.name}」與其所有文件項目？刪除後無法復原。`, { okLabel: "永久刪除", danger: true }))) return;
+            try {
+              await api("DELETE", `/api/projects/${p.id}`);
+              dlg.close();
+              toast("已刪除");
+              await reload();
+            } catch (err) { error.textContent = err.message; }
+          },
+        }, "刪除案件") : null,
         h("button", { class: "btn", type: "button", onclick: () => dlg.close() }, "取消"),
         h("button", { class: "btn btn-primary", type: "submit" }, "儲存"),
       ),

@@ -45,6 +45,8 @@ export function mount(target, ...nodes) {
 export function toast(message, kind = "info") {
   const host = document.getElementById("toast");
   const el = h("div", { class: `toast ${kind === "error" ? "error" : ""}` }, message);
+  // Keep at most two on screen so a burst of saves doesn't stack over the checklist.
+  while (host.children.length >= 2) host.firstElementChild.remove();
   host.appendChild(el);
   setTimeout(() => el.remove(), kind === "error" ? 6000 : 3000);
 }
@@ -85,7 +87,7 @@ export async function busy(button, fn, label = "處理中…") {
 export function confirmDialog(message, { okLabel = "確定", danger = false } = {}) {
   return new Promise((resolve) => {
     const dlg = h("dialog", {},
-      h("p", { style: "margin-top:0" }, message),
+      h("div", { style: "margin-bottom:16px" }, message),
       h("div", { class: "btn-row", style: "justify-content:flex-end" },
         h("button", { class: "btn", onclick: () => dlg.close("cancel") }, "取消"),
         h("button", { class: `btn ${danger ? "btn-danger" : "btn-primary"}`, onclick: () => dlg.close("ok") }, okLabel),

@@ -10,17 +10,18 @@ TFDA 查驗登記文件審查與進度追蹤平台，部署在 **Cloudflare Work
            ├─ public/            靜態前端（原生 JS，無建置步驟、無外部 CDN）
            ├─ /api/*  src/       TypeScript API（登入、專案、檢查項目、AI 分析）
            ├─ D1 (DB)            SQLite 相容資料庫：公司/使用者/專案/檢查項目/Session
-           └─ Anthropic API      AI 缺口分析（金鑰只存在 Worker Secret）
+           └─ Ollama 雲端 API    AI 缺口分析（金鑰只存在 Worker Secret）
 ```
 
 | 功能 | 說明 |
 |------|------|
 | 多租戶帳號 | 註冊公司 → 第一位為管理員；管理員可新增成員／檢視者、停用帳號 |
+| 新藥查驗登記審查門檻 | 「新藥查驗登記（化學藥）」類型含 35 項檢查與審查門檻（依 115 年度 CDE 新藥查驗登記說明會整理，見 `docs/NDA_REVIEW_THRESHOLDS.md`）；標記完成前須逐條確認，AI 分析亦逐條比對 |
 | 專案管理 | 依申請類型（藥品展延 / 食品登記 / 醫材登記）自動帶入 TFDA 檢查項目，可建立、編輯、結案、封存、刪除 |
 | 專案總覽 | KPI、完成度、狀態與風險分布、可直接修改狀態與備註的檢查清單、待辦事項 |
 | 風險自動判定 | 範本項目的風險依 `config/regulatory_schemas.yaml` 的 `risk_rules` 隨狀態自動計算；自訂項目可手動設定 |
 | 時程 / 多專案比較 | 截止日倒數、完成度與時程消耗對照、健康雷達圖 |
-| AI 文件分析 | 上傳 PDF（含掃描檔）、Word .docx、Excel .xlsx、純文字 → Claude 逐項比對檢查清單 → 缺口報告 |
+| AI 文件分析 | 上傳含文字的 PDF、Word .docx、Excel .xlsx、純文字 → 瀏覽器轉成文字 → Ollama 雲端模型逐項比對檢查清單 → 缺口報告 |
 | 匯出 | Markdown、CSV（Excel 可開）、JSON、列印 / 存成 PDF |
 
 ## 部署到 Cloudflare
@@ -34,7 +35,7 @@ TFDA 查驗登記文件審查與進度追蹤平台，部署在 **Cloudflare Work
    - **Build command**：留空
    - **Deploy command**：`npm run deploy`
 3. 儲存後即會部署。第一次部署時 Wrangler 會**自動建立 D1 資料庫** `regulatory-review`，接著自動套用 `migrations/` 內的資料表。
-4. 到該 Worker 的 **Settings → Variables and Secrets** 新增 Secret：`ANTHROPIC_API_KEY`（若不需要 AI 分析可略過，該頁會顯示「尚未啟用」）。
+4. 到該 Worker 的 **Settings → Variables and Secrets** 新增 Secret：`OLLAMA_API_KEY`（在 [ollama.com/settings/keys](https://ollama.com/settings/keys) 建立；若不需要 AI 分析可略過，該頁會顯示「尚未啟用」）。
 5. 打開 `https://regulatory-review.<你的子網域>.workers.dev` 註冊第一個帳號。
 6. （建議）完成自己公司的註冊後，把 `wrangler.jsonc` 的 `ALLOW_REGISTRATION` 改成 `"false"` 並推送，之後只能由管理員在「使用者管理」新增成員。
 
@@ -49,7 +50,7 @@ cd cloudflare
 npm ci
 npx wrangler login                       # 瀏覽器授權
 npm run deploy                           # 部署 + 建立/遷移 D1
-npx wrangler secret put ANTHROPIC_API_KEY  # 貼上 Anthropic API 金鑰
+npx wrangler secret put OLLAMA_API_KEY  # 貼上 Ollama API 金鑰
 ```
 
 ### 自訂網域
@@ -66,16 +67,15 @@ Worker → **Settings → Domains & Routes → Add → Custom domain**，輸入�
 
 - **正式使用建議 Workers Paid。**
 - 只想先用免費方案試用：把 `wrangler.jsonc` 的 `PBKDF2_ITERATIONS` 改為 `"10000"`（約 5 ms；密碼雜湊強度較低）。日後升級到 Paid 並改回 `"100000"`，使用者下次登入時會自動以新強度重新雜湊。
-- AI 分析費用依 Anthropic 用量計價；每次分析結果會顯示 token 用量與估計費用（`USD_TO_TWD` 匯率可在 `wrangler.jsonc` 調整）。
+- AI 分析使用 Ollama 雲端，費用與用量上限依你的 Ollama 方案（見 [ollama.com/pricing](https://ollama.com/pricing)）；每次分析結果會顯示 token 用量。
 - D1、Workers 的免費額度與價格以 [Cloudflare 官方定價](https://developers.cloudflare.com/workers/platform/pricing/) 為準。
 
 ## 設定（`wrangler.jsonc` → `vars`）
 
 | 變數 | 預設 | 說明 |
 |------|------|------|
-| `AI_MODEL` | `claude-opus-5-5` | AI 分析使用的 Claude 模型 |
-| `AI_EFFORT` | `high` | `low` / `medium` / `high` / `xhigh` / `max`，越高越仔細但越慢越貴 |
-| `USD_TO_TWD` | `32` | 費用換算匯率 |
+| `AI_MODEL` | `deepseek-v4.1-flash` | AI 分析使用的 Ollama 雲端模型，可用名稱見 [ollama.com/api/tags](https://ollama.com/api/tags) |
+| `AI_BASE_URL` | `https://ollama.com` | 選填。改成自架 Ollama 伺服器的網址時，須能從 Cloudflare 連到（不能是 `localhost`） |
 | `ALLOW_REGISTRATION` | `true` | 是否開放任何人註冊新公司 |
 | `SESSION_TTL_HOURS` | `168` | 登入有效時間（小時） |
 | `PBKDF2_ITERATIONS` | `100000` | 密碼雜湊強度（10,000–100,000），見上方方案說明 |
@@ -84,8 +84,7 @@ Secrets（`npx wrangler secret put <NAME>` 或 Dashboard 設定）：
 
 | Secret | 說明 |
 |--------|------|
-| `ANTHROPIC_API_KEY` | 必填才能使用 AI 分析 |
-| `ANTHROPIC_BASE_URL` | 選填，例如透過 [Cloudflare AI Gateway](https://developers.cloudflare.com/ai-gateway/) 轉送以取得用量紀錄與快取 |
+| `OLLAMA_API_KEY` | 必填才能使用 AI 分析 |
 
 ## 本機開發
 
@@ -93,7 +92,7 @@ Secrets（`npx wrangler secret put <NAME>` 或 Dashboard 設定）：
 cd cloudflare
 npm ci
 npm run db:migrate:local
-cp .dev.vars.example .dev.vars   # 填入 ANTHROPIC_API_KEY（可選）
+cp .dev.vars.example .dev.vars   # 填入 OLLAMA_API_KEY（可選）
 npm run dev                       # http://localhost:8787
 ```
 
@@ -105,6 +104,8 @@ npm test            # 單元測試：報告邏輯、密碼雜湊、TS 範本與 
 # 端到端 API 測試（需先 npm run dev）
 npm run test:e2e
 ```
+
+`test/ai.test.ts` 檢查 AI 回應的 JSON 解析與修正（Ollama 雲端不強制回應格式，所以伺服器端會自行驗證，格式錯誤時自動重試一次）。
 
 `test/schemas.test.ts` 會讀取 `../config/regulatory_schemas.yaml`，比對 `src/schemas.ts` 的每一個項目、類別與風險規則。修改 YAML 後若沒同步更新 TS，測試就會失敗。GitHub Actions（`.github/workflows/cloudflare.yml`）在每次 PR 時都會跑上述所有測試，並搭配本機 D1 與模擬的 AI 後端執行 API 端到端測試。
 
@@ -124,7 +125,8 @@ npm run test:e2e
 - 字型：標題使用楷書字型 LXGW WenKai TC，取公文常用標楷體的語感；數字與英文使用 IBM Plex Sans。兩者都由 Google Fonts 非同步載入，連不到 Google 時會自動改用系統內建的標楷體與黑體，不影響使用。若公司政策不允許連線 Google，可刪除 `public/theme.js` 中載入字型的段落。
 - 顏色：冷灰綠的表格紙底、藍黑墨色文字、朱紅印章。狀態顏色固定為：已完成（墨綠）、審查中（靛藍）、進行中（赭黃）、受阻（朱紅）、待處理（灰）。
 - 案件總覽右上角的印章顯示整體狀態（可以送件／接近完成／尚待補齊）；印章下方的色塊條，每一塊代表一份文件。
+- 紅色只用在需要立即處理的案件：已逾期、距截止日不到 30 天，或有受阻的文件（已結案、封存的案件不會標紅）。完成度低但時程還早的案件，印章與狀態標籤以灰色顯示，頁面上會寫出標紅的原因。
 
 ## 資料說明
 
-AI 分析會把文件內容傳送至 Anthropic API。請確認上傳資料符合公司保密規範與相關個資規定。AI 結果僅供內部初步檢查參考，不構成法規意見，送件前仍須由 RA 人員依 TFDA 現行公告確認。
+AI 分析會先在瀏覽器把文件轉成文字，再傳送至 Ollama 雲端（Ollama 表示不會用雲端請求內容訓練模型，詳見其[隱私權政策](https://ollama.com/privacy)）。掃描檔沒有文字層，需先做 OCR。請確認上傳資料符合公司保密規範與相關個資規定。AI 結果僅供內部初步檢查參考，不構成法規意見，送件前仍須由 RA 人員依 TFDA 現行公告確認。
