@@ -13,15 +13,15 @@
   --rule-soft: #dfe6e3;
   --link: #1f4e79;
 
-  --seal: #c23b2e;
+  --seal: #b3342a;
   --seal-wash: #f6e2de;
   --done: #2e6b4e;
   --done-wash: #dcebe2;
   --review: #34509a;
   --review-wash: #e0e6f4;
-  --progress: #a86a12;
+  --progress: #8a560c;
   --progress-wash: #f4e8d2;
-  --pending: #7a8790;
+  --pending: #57646d;
   --pending-wash: #e4e9e7;
 
   --btn-bg: var(--ink);
@@ -45,7 +45,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --paper: #131c25; --sheet: #18232e; --ink: #e3e8e5; --ink-2: #9aa8b1; --ink-3: #6f7e88;
+    --paper: #131c25; --sheet: #18232e; --ink: #e3e8e5; --ink-2: #9aa8b1; --ink-3: #85939c;
     --rule: #2c3a47; --rule-soft: #22303c; --link: #9cc0e4;
     --seal: #e2584b; --seal-wash: rgba(226, 88, 75, .14);
     --done: #6fbf94; --done-wash: rgba(111, 191, 148, .14);
@@ -57,7 +57,7 @@
   }
 }
 :root[data-theme="dark"] {
-  --paper: #131c25; --sheet: #18232e; --ink: #e3e8e5; --ink-2: #9aa8b1; --ink-3: #6f7e88;
+  --paper: #131c25; --sheet: #18232e; --ink: #e3e8e5; --ink-2: #9aa8b1; --ink-3: #85939c;
   --rule: #2c3a47; --rule-soft: #22303c; --link: #9cc0e4;
   --seal: #e2584b; --seal-wash: rgba(226, 88, 75, .14);
   --done: #6fbf94; --done-wash: rgba(111, 191, 148, .14);
@@ -130,7 +130,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .nav a[aria-current="page"]::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--seal); }
 
 .side-block { padding: 0 20px; }
-.side-label { display: block; font-size: var(--t-xs); color: var(--ink-3); margin-bottom: 6px; }
+.side-label { display: block; font-size: var(--t-xs); color: var(--ink-2); margin-bottom: 6px; }
 .side-block select {
   width: 100%; padding: 7px 8px; border: 1px solid var(--rule); border-radius: 3px;
   background: var(--sheet); color: var(--ink); font-size: var(--t-sm);
@@ -196,7 +196,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   opacity: .92;
   animation: stamp .45s cubic-bezier(.2, 1.4, .4, 1) both;
 }
-.seal-text { writing-mode: vertical-rl; height: 2.25em; line-height: 1.1; letter-spacing: 0; font-size: 2.05rem; }
+.seal-text { display: grid; grid-template-rows: repeat(2, 1.1em); grid-auto-flow: column; grid-auto-columns: 1.1em; direction: rtl; place-items: center; font-size: 2.05rem; line-height: 1; }
 .seal.ready_for_submission { --seal-c: var(--done); }
 .seal.in_progress { --seal-c: var(--review); }
 .seal.needs_attention { --seal-c: var(--seal); }
@@ -238,7 +238,7 @@ th {
 }
 td { padding: 11px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
 tbody tr:last-child td { border-bottom: 1px solid var(--ink); }
-td.seq { width: 2.5em; color: var(--ink-3); }
+td.seq { width: 2.5em; color: var(--ink-2); }
 .item-name { font-weight: 600; color: var(--ink); }
 .item-sub { font-size: var(--t-xs); color: var(--ink-2); margin-top: 2px; }
 td .notes { min-width: 180px; }
@@ -247,17 +247,54 @@ td .notes { min-width: 180px; }
 
 @media (max-width: 700px) {
   table.checklist thead { display: none; }
-  table.checklist tr { display: grid; grid-template-columns: 1.6em minmax(0, 1fr) auto; gap: 8px 10px; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+  table.checklist tr { display: grid; grid-template-columns: 1.6em minmax(0, 1fr) auto auto; gap: 8px 10px; padding: 12px 0; border-bottom: 1px solid var(--rule); }
   table.checklist tbody tr:last-child { border-bottom: 1px solid var(--ink); }
   table.checklist td { padding: 0; border: 0; }
   table.checklist tbody tr:last-child td { border: 0; }
   table.checklist .c-seq { grid-row: span 3; }
   table.checklist .c-status { grid-column: 3; grid-row: 1; }
-  table.checklist .c-risk { grid-column: 3; grid-row: 2; text-align: right; }
+  table.checklist .c-risk { grid-column: 4; grid-row: 1; padding-top: 4px; }
   table.checklist .c-notes, table.checklist .c-act { grid-column: 2 / -1; }
   table.checklist .c-act:empty { display: none; }
   table.checklist td .notes { min-width: 0; }
 }
+
+/* Checklist sections (CTD modules). Each section is its own <tbody>. */
+table.checklist tbody tr:last-child td { border-bottom-color: var(--rule); }
+table.checklist tbody:last-child tr:last-child td { border-bottom-color: var(--ink); }
+.group-row th { padding: 20px 0 0; border-bottom: 1px solid var(--ink); white-space: normal; }
+table.checklist tbody:first-of-type .group-row th { padding-top: 4px; }
+.group-toggle {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  background: none; border: 0; padding: 6px 10px 7px 0; cursor: pointer; text-align: left;
+  font: inherit; color: var(--ink);
+}
+.group-toggle:disabled { cursor: default; }
+.group-toggle::before {
+  content: ""; flex: none; width: 0; height: 0;
+  border-left: 6px solid var(--ink-2); border-top: 4.5px solid transparent; border-bottom: 4.5px solid transparent;
+  transition: transform .15s;
+}
+.group-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
+.group-toggle:disabled::before { visibility: hidden; }
+.group-label { font-family: var(--kai); font-size: var(--t-lg); font-weight: 700; }
+.group-toggle .strip.mini { flex: 0 1 140px; min-width: 60px; margin-left: auto; }
+.group-count { flex: none; min-width: 5.5em; text-align: right; font-size: var(--t-xs); font-weight: 400; color: var(--ink-2); }
+.group-count.all-done { color: var(--done); font-weight: 600; }
+tbody.collapsed tr:not(.group-row) { display: none; }
+tbody.collapsed .group-row th { border-bottom-color: var(--rule); }
+@media (prefers-reduced-motion: reduce) { .group-toggle::before { transition: none; } }
+@media print { tbody.collapsed tr:not(.group-row) { display: table-row; } .group-toggle::before { display: none; } }
+@media (max-width: 700px) {
+  table.checklist tbody tr:last-child { border-bottom-color: var(--rule); }
+  table.checklist tbody:last-child tr:last-child { border-bottom-color: var(--ink); }
+  table.checklist tr.group-row { display: block; padding: 0; border: 0; }
+  table.checklist .group-row th { display: block; }
+  .group-toggle .strip.mini { display: none; }
+  .group-count { margin-left: auto; }
+}
+
+.todo-more { margin: 10px 0 0; font-size: var(--t-xs); color: var(--ink-2); }
 
 /* Review thresholds (審查門檻) under a checklist item. */
 .criteria { margin-top: 6px; font-size: var(--t-xs); color: var(--ink-2); max-width: 62ch; }

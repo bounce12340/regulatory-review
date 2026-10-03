@@ -8,6 +8,24 @@ import { docStrip, stripLegend, meter, seal } from "../lib/charts.js";
 
 const STATUSES = ["pending", "in_progress", "under_review", "blocked", "completed"];
 const RISKS = ["low", "medium", "high"];
+const TODO_LIMIT = 6;
+
+// Checklist sections, in CTD order. Schemas whose categories don't match any of these
+// (the food / device / import templates) keep a flat list.
+const GROUPS = [
+  { key: "m1_admin", label: "M1 行政文件", cats: ["module1_admin"] },
+  { key: "m1_quality", label: "M1 品質證明文件", cats: ["module1_quality_docs"] },
+  { key: "m3_s", label: "M3 原料藥（3.2.S）", cats: ["module3_drug_substance"] },
+  { key: "m3_p", label: "M3 成品（3.2.P）", cats: ["module3_drug_product"] },
+  { key: "m4", label: "M4 非臨床", cats: ["module4_nonclinical"] },
+  { key: "m5", label: "M5 臨床", cats: ["module5_clinical"] },
+  { key: "cross", label: "全案一致性", cats: ["cross_module"] },
+];
+const CUSTOM_GROUP = { key: "custom", label: "自訂項目" };
+
+// Sections the user opened or closed, per project, for this browser tab. Unset sections
+// start closed only when every document in them is completed.
+const sectionOpen = new Map();
 
 export async function renderOverview(main, params, ctx) {
   const requested = Number(params[0]);
@@ -43,8 +61,11 @@ export async function renderOverview(main, params, ctx) {
     first = false;
   }
   function drawTable() {
-    const body = main.querySelector("#checklist-body");
-    if (body) mount(body, checklistRows(detail, filters, onDetail));
+    const table = main.querySelector("#checklist-table");
+    if (table) {
+      table.querySelectorAll(":scope > tbody").forEach((b) => b.remove());
+      table.append(...checklistBodies(detail, filters, onDetail));
+    }
     const count = main.querySelector("#checklist-count");
     if (count) count.textContent = countLabel(detail.items, filters);
   }
@@ -107,11 +128,11 @@ function view(detail, filters, { onDetail, onFilter, animate }) {
             oninput: (e) => { filters.q = e.target.value; onFilter(); } }),
         ),
         h("div", { class: "table-wrap" },
-          h("table", { class: "checklist" },
+          h("table", { class: "checklist", id: "checklist-table" },
             h("thead", {}, h("tr", {},
               h("th", {}, h("span", { class: "sr-only" }, "序號")), h("th", {}, "文件"), h("th", {}, "狀態"),
               h("th", {}, "風險"), h("th", {}, "備註"), h("th", { class: "no-print" }, h("span", { class: "sr-only" }, "操作")))),
-            h("tbody", { id: "checklist-body" }, checklistRows(detail, filters, onDetail)),
+            checklistBodies(detail, filters, onDetail),
           ),
         ),
         canEdit() ? addItemForm(detail, onDetail) : null,
@@ -127,10 +148,7 @@ function view(detail, filters, { onDetail, onFilter, animate }) {
         ),
         h("section", { class: "sheet" },
           h("h2", { class: "sheet-title" }, "待辦", h("span", { class: "aside" }, `${action_items.length} 項`)),
-          action_items.length
-            ? h("ul", { class: "todo" }, action_items.map((a) => h("li", { class: a.priority },
-              h("strong", {}, a.item), h("span", {}, a.action))))
-            : h("p", { class: "muted small" }, "所有文件都已完成。"),
+          todoList(action_items),
         ),
         h("section", { class: "sheet no-print" },
           h("h2", { class: "sheet-title" }, "匯出"),
@@ -166,13 +184,43 @@ function countLabel(items, f) {
   return n === items.length ? `共 ${items.length} 份` : `顯示 ${n} ／ ${items.length} 份`;
 }
 
-function checklistRows(detail, filters, onDetail) {
-  const editable = canEdit();
-  const rows = filterItems(detail.items, filters);
-  if (!rows.length) {
-    return h("tr", {}, h("td", { colspan: 6, class: "muted" },
-      detail.items.length ? "沒有符合篩選條件的文件。" : "這個案件還沒有文件項目，可在下方新增。"));
+function todoList(actionItems) {
+  if (!actionItems.length) return h("p", { class: "muted small" }, "所有文件都已完成。");
+  // High priority first; the full list is in the checklist and the exported report.
+  const sorted = [...actionItems].sort((a, b) => (a.priority === "high" ? 0 : 1) - (b.priority === "high" ? 0 : 1));
+  const shown = sorted.slice(0, TODO_LIMIT);
+  const rest = sorted.length - shown.length;
+  return [
+    h("ul", { class: "todo" }, shown.map((a) => h("li", { class: a.priority },
+      h("strong", {}, a.item), h("span", {}, a.action)))),
+    rest > 0 ? h("p", { class: "todo-more" }, `另有 ${rest} 項，完整內容見文件檢查清單或匯出報告。`) : null,
+  ];
+}
+
+function groupItems(items) {
+  const byCat = new Map(GROUPS.flatMap((g) => g.cats.map((c) => [c, g])));
+  if (!items.some((i) => i.item_key && byCat.has(i.category))) return null;
+  const groups = new Map([...GROUPS, CUSTOM_GROUP].map((g) => [g.key, { ...g, items: [] }]));
+  for (const item of items) {
+    const g = (item.item_key && byCat.get(item.category)) || CUSTOM_GROUP;
+    groups.get(g.key).items.push(item);
   }
+  return [...groups.values()].filter((g) => g.items.length);
+}
+
+// Section order, so row numbers match what the user sees (and the exported report).
+function displayOrder(items) {
+  return groupItems(items)?.flatMap((g) => g.items) ?? items;
+}
+
+function checklistBodies(detail, filters, onDetail) {
+  const { items } = detail;
+  const shown = filterItems(items, filters);
+  const groups = groupItems(items);
+  const seq = new Map(displayOrder(items).map((item, n) => [item, n + 1]));
+  const emptyBody = (text) => h("tbody", {}, h("tr", {}, h("td", { colspan: 6, class: "muted" }, text)));
+  if (!items.length) return [emptyBody("這個案件還沒有文件項目，可在下方新增。")];
+  if (!shown.length) return [emptyBody("沒有符合篩選條件的文件。")];
 
   const save = async (item, patch) => {
     try {
@@ -182,14 +230,52 @@ function checklistRows(detail, filters, onDetail) {
       toast(err.message, "error");
     }
   };
+  const row = (item) => itemRow(item, seq.get(item), save, onDetail);
 
-  return rows.map((item) => h("tr", {},
-    h("td", { class: "seq c-seq" }, detail.items.indexOf(item) + 1),
+  if (!groups) return [h("tbody", {}, shown.map(row))];
+
+  // While filtering, every matching row stays visible; sections with no match drop out.
+  const filtering = Boolean(filters.status || filters.risk || filters.q.trim());
+  const visible = new Set(shown);
+  return groups.flatMap((g) => {
+    const rows = g.items.filter((i) => visible.has(i));
+    if (!rows.length) return [];
+    const done = g.items.filter((i) => i.status === "completed").length;
+    const stateKey = `${detail.project.id}:${g.key}`;
+    const open = filtering || (sectionOpen.get(stateKey) ?? done < g.items.length);
+    const headId = `grp-${g.key}`;
+    const body = h("tbody", { class: open ? null : "collapsed", "aria-labelledby": headId },
+      h("tr", { class: "group-row" }, h("th", { colspan: 6, scope: "rowgroup" },
+        h("button", {
+          type: "button", class: "group-toggle", id: headId, "aria-expanded": String(open), disabled: filtering,
+          onclick: (e) => {
+            const next = body.classList.toggle("collapsed") === false;
+            sectionOpen.set(stateKey, next);
+            e.currentTarget.setAttribute("aria-expanded", String(next));
+          },
+        },
+          h("span", { class: "group-label" }, g.label),
+          decorative(docStrip(g.items, { mini: true })),
+          h("span", { class: `group-count${done === g.items.length ? " all-done" : ""}` }, `完成 ${done}／${g.items.length}`),
+        ))),
+      rows.map(row));
+    return [body];
+  });
+}
+
+// The count next to it already says it; keep the button's accessible name short.
+function decorative(el) {
+  el.setAttribute("aria-hidden", "true");
+  return el;
+}
+
+function itemRow(item, n, save, onDetail) {
+  const editable = canEdit();
+  return h("tr", {},
+    h("td", { class: "seq c-seq" }, n),
     h("td", { class: "c-name" },
       h("div", { class: "item-name" }, item.item_name),
-      h("div", { class: "item-sub" },
-        item.item_key ? (item.required ? "必要文件" : "依適用性") : "自訂項目",
-        item.category ? `，${item.category.replace(/_/g, " ")}` : ""),
+      h("div", { class: "item-sub" }, item.item_key ? (item.required ? "必要文件" : "依適用性") : "自訂項目"),
       item.criteria?.length ? h("details", { class: "criteria" },
         h("summary", {}, `審查門檻（${item.criteria.length} 項）`),
         h("ul", {}, item.criteria.map((c) => h("li", {}, c)))) : null,
@@ -229,7 +315,7 @@ function checklistRows(detail, filters, onDetail) {
         },
       }, "刪除")
       : null),
-  ));
+  );
 }
 
 function addItemForm(detail, onDetail) {
@@ -273,7 +359,7 @@ function toMarkdown({ project, summary, items, action_items }) {
     "",
     "| # | 文件 | 狀態 | 風險 | 備註 |",
     "|---|------|------|------|------|",
-    ...items.map((i, n) => `| ${n + 1} | ${esc(i.item_name)} | ${STATUS_LABEL[i.status]} | ${RISK_LABEL[i.risk_level]} | ${esc(i.notes)} |`),
+    ...displayOrder(items).map((i, n) => `| ${n + 1} | ${esc(i.item_name)} | ${STATUS_LABEL[i.status]} | ${RISK_LABEL[i.risk_level]} | ${esc(i.notes)} |`),
   ];
   if (action_items.length) {
     lines.push("", "## 待辦", "");

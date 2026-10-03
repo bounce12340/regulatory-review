@@ -37,7 +37,7 @@ export function meter(label, pct, { warn = false } = {}) {
 export function seal(overall) {
   // Four characters, read like a real seal: vertical columns, right to left.
   return h("div", { class: `seal ${overall}`, role: "img", "aria-label": `整體狀態：${OVERALL_LABEL[overall]}` },
-    h("div", { class: "seal-text", "aria-hidden": "true" }, OVERALL_LABEL[overall] ?? ""));
+    h("div", { class: "seal-text", "aria-hidden": "true" }, [...(OVERALL_LABEL[overall] ?? "")].map((ch) => h("span", {}, ch))));
 }
 
 /**
