@@ -324,6 +324,7 @@ schemas:
           - "使用現行版本（113年6月公告、113.07.01 起適用；含 NCE-2 欄位），每一欄均已判定適用性。"
           - "每項附件可追溯到檔名、版本／日期與 CTD 位置；「不適用」須有依據。"
           - "RTF 檢核若有重大缺失，廠商僅有 4 個月內一次補齊重新送件的機會，故送件前即應完備。"
+          - "TFDA 於收件後 42 天內對資料不齊全者發文退件（Refuse to File）；未收到退件通知即續審；屬藥事法第48條之9第4款（P4）者於第42天核發資料齊備通知〔審查流程110.10〕。"
       - key: m1_gcp_table
         label: "M1 GCP 查核及藥品查驗登記申請案之臨床試驗資料表"
         category: module1_admin
@@ -349,6 +350,7 @@ schemas:
           - "【適用】新成分、新療效、新複方、新使用途徑新藥必附。"
           - "勾選欲申請項目（專利權期間延長、健保價格加算、資料專屬期等）；皆不申請時於「不適用」勾選，下方試驗清單留空。"
           - "臨床試驗清單與 Module 5 一致、無漏列。"
+          - "申請新成分新藥資料專屬期者，須為國外取得上市許可後三年內向我國申請（藥事法第40條之2第4項），並於切結書（甲）聲明；經舉證不實得取消資料專屬期。"
       - key: m1_patent_declaration
         label: "M1 藥品專利狀態之宣告表"
         category: module1_admin
@@ -442,6 +444,20 @@ schemas:
           - "檢附 BSE 查檢表與完整臨床資料包（complete clinical data package），最好含東亞人種資料。"
           - "免另案申請情形：小兒或少數嚴重疾病藥品認定、細胞／基因治療製劑，或已在國內執行具代表性且提供東亞人種 PK 之臨床試驗。"
           - "BSE 免除函不等於療效與安全性已被認可，仍以查驗登記完整審查為準。"
+      - key: m1_affidavit
+        label: "M1 切結書（甲）（乙）"
+        category: module1_admin
+        required: true
+        risk_rules:
+          completed: low
+          default: high
+        action: "Sign affidavits A and B with the proposed Chinese and English product names"
+        action_zh: "填妥並用印切結書（甲）（乙）"
+        criteria:
+          - "切結書（甲）：品名、商標、仿單、圖形、包裝或專利製造方法如與他廠重複、類似或有糾紛，依商標、專利主管機關認定或法院裁判並負法律責任；所繳品質管制紀錄及檢驗書表正確；未領證前不得擅先出售。"
+          - "申請新成分新藥資料專屬期者，切結書（甲）載明符合藥事法第40條之2第4項（國外取得上市許可後三年內向我國申請）。"
+          - "切結書（乙）：樣品經檢驗判定不合格者，依「簡化藥品查驗登記程序」接受處分。"
+          - "填入擬定藥品中英文品名（並列）、具切結商號用印、負責人、地址及日期。"
       # ── Module 3 原料藥 ──
       - key: s21_manufacturer
         label: "3.2.S.2.1 原料藥製造廠"
@@ -704,6 +720,7 @@ schemas:
           - "人體主要代謝物已於動物毒理試驗中涵蓋（ICH M3(R2)）。"
           - "整理動物與人體暴露量（AUC／Cmax）倍數；改劑型或改途徑使全身暴露上升時，評估既有毒理資料是否足夠。"
           - "每項發現整理為 finding、NOAEL 與相對人體暴露倍數，可供審查直接引用。"
+          - "非臨床安全性（安全性藥理、藥動、毒理）於合適動物物種執行，樞紐性安全性試驗符合 GLP；非臨床藥理試驗足以支持療效〔審查重點110.10.27〕。"
       - key: m4_qualification
         label: "M4 不純物、新賦形劑與可滲出物之安全性驗證"
         category: module4_nonclinical
@@ -746,6 +763,8 @@ schemas:
           - "上市製劑與臨床試驗用藥之產品連結性可追溯（近五年常見缺失）。"
           - "藥物特性、特殊族群（肝／腎功能）與藥物交互作用資料足以支持用法用量與警語。"
           - "國外資料對國人／東亞族群之外推性有清楚論證。"
+          - "吸收、分布、代謝、排泄資料足以釐清藥品特性；提供藥效學資訊及藥動／藥效關係〔審查重點110.10.27〕。"
+          - "說明是否已免除銜接性試驗，以及宣稱適應症與用法用量之藥動藥效有無種族差異〔審查重點110.10.27〕。"
       - key: m5_clinical
         label: "M5 臨床療效與安全性"
         category: module5_clinical
@@ -760,6 +779,51 @@ schemas:
           - "臨床資料量與研究設計足以支持療效與安全性結論（近五年不准案以「臨床資料不足」與「試驗結果無法證實療效」最多）。"
           - "主要／次要療效指標、統計方法與結果直接支持擬申請適應症文字。"
           - "安全性資料、風險族群與風險管理／仿單一致。"
+          - "長期使用藥物有足夠資料支持長期療效與安全性；用法用量合理；該適應症已有其他核准療法者，提供比較資料〔審查重點110.10.27〕。"
+      - key: m5_statistics
+        label: "M5 統計：樞紐性試驗與整體療效證據力"
+        category: module5_clinical
+        required: true
+        risk_rules:
+          completed: low
+          under_review: medium
+          default: high
+        action: "Show adequate pivotal trials whose design, statistics and results support the claims"
+        action_zh: "確認樞紐性試驗之設計、統計方法與結果足以支持宣稱"
+        criteria:
+          - "針對宣稱之適應症與用法用量，有合宜的樞紐性試驗〔審查重點110.10.27〕。"
+          - "樞紐性試驗之設計與統計方法適當〔審查重點110.10.27〕。"
+          - "樞紐性試驗結果能支持宣稱適應症與用法用量之療效〔審查重點110.10.27〕。"
+          - "整體療效證據力（Overall Evidence of Efficacy）足以支持宣稱適應症與用法用量〔審查重點110.10.27〕。"
+      - key: m5_postmarketing
+        label: "上市後安全：PSUR、上市後研究、RMP 與利益風險評估"
+        category: module5_clinical
+        required: true
+        risk_rules:
+          completed: low
+          under_review: medium
+          default: high
+        action: "Provide PSURs, the benefit-risk assessment, and assess post-marketing studies and a risk management plan"
+        action_zh: "檢附 PSUR 與利益風險評估，並評估上市後研究與風險管理計畫"
+        criteria:
+          - "已於國外上市者檢附上市後藥品定期安全性報告（PSUR）〔審查重點110.10.27〕。"
+          - "評估是否需執行上市後研究；精簡審查案件說明國外主管機關要求之 Phase IV commitment 是否比照〔審查重點110.10.27〕。"
+          - "評估是否需風險管理計畫（RMP）；採用證明 0 張者強制檢附 RMP（見 M1 採用證明）。"
+          - "提供利益風險評估（Benefit-Risk Assessment）〔審查重點110.10.27〕。"
+      - key: label_draft
+        label: "中文仿單擬稿（及 RMP 草本）"
+        category: cross_module
+        required: true
+        risk_rules:
+          completed: low
+          under_review: medium
+          default: high
+        action: "Draft the Chinese package insert consistent with the dossier"
+        action_zh: "完成與全案資料一致之中文仿單擬稿"
+        criteria:
+          - "中文仿單擬稿內容恰當，適應症、用法用量、特殊族群、警語與交互作用均可回溯至 CTD 資料〔審查重點110.10.27〕。"
+          - "新複方之特殊族群建議取個別單方中最保守者；超出單方仿單建議者須有藥動或臨床試驗支持〔RegMed 2020 Vol.115〕。"
+          - "TFDA 發 AL 通知或審查完成通知函時，須提供仿單或 RMP 草本（新成分新藥約第330天）〔審查流程110.10〕。"
       - key: ctd_consistency
         label: "全案一致性（申請書、CTD、仿單、CPP、GMP、CoA）"
         category: cross_module
@@ -773,6 +837,110 @@ schemas:
           - "申請表、CTD、仿單、CPP、GMP、CoA、採用證明之品名、劑型、含量、配方、製造廠名稱地址與日期一致。"
           - "Module 2 摘要之結論均可回溯至 Module 3–5 之完整原始資料。"
           - "依 CTD（M1–M5）格式經 ExPress 線上送件（115.01.01 起不收紙本）；新成分新藥及生物藥品預計 116.07.01 起全面採 eCTD。"
+      # ── 新藥類別審查重點（依適用性；不適用者標記「不適用」並列原因） ──
+      - key: type_new_indication
+        label: "新藥類別：新療效（新適應症）"
+        category: nda_type
+        required: false
+        risk_rules:
+          completed: low
+          default: medium
+        action: "Address the review points for a new indication"
+        action_zh: "依新療效審查重點準備資料"
+        criteria:
+          - "CMC 與已上市藥品不同者，原料藥與製劑依新成分藥品審查〔審查重點110.10.27〕。"
+          - "藥理資料足以支持新療效；新用法用量超過原核准範圍者，現有非臨床與臨床資料足以支持，否則另附安全性資料〔審查重點110.10.27〕。"
+          - "評估新適應症族群之藥動特性（血中濃度、曝露量）與新用法用量合理性，並評估特殊族群、藥物交互作用及食物效應〔審查重點110.10.27〕。"
+          - "臨床資料支持新適應症與用法用量之療效、安全性及長期使用；說明種族差異、與其他核准療法之比較、PSUR 與利益風險評估〔審查重點110.10.27〕。"
+      - key: type_new_combination
+        label: "新藥類別：新複方"
+        category: nda_type
+        required: false
+        risk_rules:
+          completed: low
+          default: medium
+        action: "Address the review points for a new fixed-dose combination"
+        action_zh: "依新複方審查重點準備資料"
+        criteria:
+          - "定義：二種以上已核准成分之複方，具有優於各該單一成分之醫療效能；含未核准新成分者依新成分新藥準備資料〔RegMed 2020 Vol.115〕。"
+          - "CMC：評估原料藥之間及原料藥與賦形劑之相容性；原料藥檢送技術性資料者依新成分藥品審查〔審查重點110.10.27〕。"
+          - "藥毒理：缺乏臨床合併使用經驗者，評估單方間交互作用及最長 90 天複方銜接性毒性試驗；毒性器官或機轉相似、近臨床暴露量有嚴重毒性或交互作用有安全疑慮者，提供最長 90 天重覆劑量毒性及／或胚胎－胎兒發育試驗；臨床常見併用且無疑慮、適應症與劑量相當者可免除〔審查重點110.10.27〕。"
+          - "藥動：fixed 對 free combination 之生體相等性試驗（交叉或拉丁方格設計），不得以文獻免除；食物效應原則上不得免除；單方間藥物交互作用可以文獻支持；評估特殊族群〔RegMed 2020 Vol.115〕。"
+          - "不同單位含量：依溶離率曲線比對取代 BE 原則（衛署藥字第0980364804號）；控釋劑型高劑量者應執行 BE〔RegMed 2020 Vol.115〕。"
+          - "臨床：樞紐試驗支持療效安全；說明個別單方貢獻（contribution）及優於各單方之療效；除改善順從性外具臨床與公衛價值；不同劑量均涵蓋；合乎醫療常規（第一線或後線）；族群差異與利益風險評估〔審查重點110.10.27〕。"
+          - "僅提供 free combination = fixed combination 之生體相等性資料，而無附加治療或起始治療之臨床試驗或文獻者，不足以支持上市〔RegMed 2020 Vol.114〕。"
+      - key: type_new_route
+        label: "新藥類別：新使用途徑"
+        category: nda_type
+        required: false
+        risk_rules:
+          completed: low
+          default: medium
+        action: "Address the review points for a new route of administration"
+        action_zh: "依新使用途徑審查重點準備資料"
+        criteria:
+          - "CMC：原料藥晶型或粒徑影響生體可用率者須管控；注射劑管控微粒、無菌與內毒素；放寬不純物規格須說明合理性〔審查重點110.10.27〕。"
+          - "非臨床安全性資料支持新途徑及預期給藥間隔與期間；引用同成分資料支持全身曝露者，評估是否僅需局部組織安全性〔審查重點110.10.27〕。"
+          - "於最大用法用量下執行生體可用率試驗；血管內外途徑轉換時，重新評估吸收、代謝、藥物交互作用、食物效應與特殊族群；生體可用率較高者評估是否需涵蓋新曝露量之試驗〔審查重點110.10.27〕。"
+          - "樞紐試驗支持療效安全；說明新途徑是否伴隨新安全議題、劑量選擇合理性、族群差異及利益風險評估〔審查重點110.10.27〕。"
+      - key: type_new_dosage_form
+        label: "新藥類別：新劑型（速放、控釋、奈米）"
+        category: nda_type
+        required: false
+        risk_rules:
+          completed: low
+          default: medium
+        action: "Address the review points for a new dosage form"
+        action_zh: "依新劑型審查重點準備資料"
+        criteria:
+          - "CMC：說明賦形劑選擇、配方與製程開發、容器封蓋系統及微生物學屬性，以支持製程與成品管制〔審查重點110.10.27〕。"
+          - "藥毒理：比較新劑型與已核准劑型之 Cmax、AUC 與曲線形狀，判斷是否需額外非臨床試驗；產生新不純物或使用新賦形劑者可能需安全性試驗〔審查重點110.10.27〕。"
+          - "奈米劑型原則上視為全新藥品：評估穿透生理障壁之標的器官、免疫毒性、凝集與血栓、局部刺激、基因毒性及胚胎毒性〔審查重點110.10.27〕。"
+          - "藥動：原則上提供 BE 或 BA 試驗報告，並重新評估食物效應、特殊族群與藥物交互作用〔審查重點110.10.27〕。"
+          - "臨床：原則上檢送與原核准劑型之 BE；無法達到 BE 者檢送樞紐試驗，原核准劑型有多個適應症者須逐一支持；控釋劑型之用法用量須能配合劑量調整與特殊族群；奈米劑型須樞紐試驗；評估 RMP 與利益風險〔審查重點110.10.27〕。"
+      - key: type_new_dose_strength
+        label: "新藥類別：新使用劑量／新單位含量"
+        category: nda_type
+        required: false
+        risk_rules:
+          completed: low
+          default: medium
+        action: "Address the review points for a new dose or strength"
+        action_zh: "依新使用劑量／新單位含量審查重點準備資料"
+        criteria:
+          - "CMC：與已核准藥品比較原料藥規格；每日最大劑量增加而不純物超過驗證閾值者，提供安全性資料；同一分析方法用於多種含量者，評估方法確效之適用性〔審查重點110.10.27〕。"
+          - "藥毒理：提供已核准藥品之非臨床資訊，以藥理或藥動建立劑量與療效之關聯；安全性資料不足處另行評估或試驗〔審查重點110.10.27〕。"
+          - "新使用劑量：最大用法用量下之 BA；曝露量較高者重新評估藥物交互作用、食物效應與特殊族群；檢送樞紐試驗（設計比照新成分藥品）並說明劑量改變目的〔審查重點110.10.27〕。"
+          - "新單位含量：適應症與用法用量須與已核准藥品相同；檢送與原含量之 BE，無法達到 BE 者檢送 BA 及樞紐試驗〔審查重點110.10.27〕。"
+      - key: type_prodrug
+        label: "新藥類別：前驅藥物（Prodrug）"
+        category: nda_type
+        required: false
+        risk_rules:
+          completed: low
+          default: medium
+        action: "Address the review points for a prodrug or active metabolite"
+        action_zh: "依前驅藥物審查重點準備資料"
+        criteria:
+          - "CMC 與藥動要求同新成分藥品，並同時評估前驅藥品與活性代謝產物之藥動資料〔審查重點110.10.27〕。"
+          - "欲引用已上市藥品資料減免非臨床試驗者，提供前驅藥是否具活性、人體與試驗物種間之轉換比率與時間等科學連結資料，並與法規單位討論〔審查重點110.10.27〕。"
+          - "前驅藥品之 in vitro hERG、基因毒性與局部耐受性為必須執行或評估之項目〔審查重點110.10.27〕。"
+          - "活性代謝產物已於國內核准者，說明代謝途徑、特殊族群、藥物交互作用與劑量合理性；引用既有資料須說明合理性〔審查重點110.10.27〕。"
+      - key: type_abbreviated
+        label: "新藥類別：精簡審查（經 TFDA 認定）"
+        category: nda_type
+        required: false
+        risk_rules:
+          completed: low
+          default: medium
+        action: "Address the review points for abbreviated review"
+        action_zh: "依精簡審查重點準備資料"
+        criteria:
+          - "經本署認定之精簡審查案件，審查時程約 180 天（不含補件時間）〔審查流程110.10〕。"
+          - "化學藥 CMC：檢附原料藥製造廠、製程、規格與容器封蓋系統與 FDA、EMA 或 MHLW/PMDA 至少一地區相同之聲明者，原料藥審查物化性質、規格與 CoA；製劑審查藥劑發展、製程、規格與 CoA、容器封蓋系統與安定性〔審查重點110.10.27〕。"
+          - "藥毒理原則上認可 FDA、EMA 或 MHLW/PMDA 審查意見，須檢附藥毒理總結報告或審查意見〔審查重點110.10.27〕。"
+          - "已在美歐日其中兩國／區域核准者，藥動重點為東西方族群差異、配方或製程變更之連結資料，以及兩區域意見不同時之特殊族群與交互作用評估〔審查重點110.10.27〕。"
+          - "臨床：說明宣稱適應症與 FDA、EMA 或 MHLW/PMDA 核准適應症之差異、銜接性與種族差異、國外 Phase IV commitment、RMP、PSUR 與利益風險評估〔審查重點110.10.27〕。"
 
   # ─── 原料藥查驗登記／原料藥主檔案（DMF）RTF 查檢表一～四 ───────────────────
   # 來源：衛授食字第1101407579號公告（110.08.10，即日生效）「原料藥查驗登記暨原料藥主檔案

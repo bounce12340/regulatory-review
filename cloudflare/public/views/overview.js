@@ -25,6 +25,7 @@ const GROUPS = [
   { key: "m4", label: "M4 非臨床", cats: ["module4_nonclinical"] },
   { key: "m5", label: "M5 臨床", cats: ["module5_clinical"] },
   { key: "cross", label: "全案一致性", cats: ["cross_module"] },
+  { key: "nda_type", label: "新藥類別審查重點（依適用性）", cats: ["nda_type"] },
   // 原料藥／DMF RTF checklists: sections follow the refuse-to-file rules, so row numbers
   // stay the same as the numbering on TFDA's form.
   { key: "rtf_gate", label: "退件關鍵項", cats: ["rtf_gate"] },

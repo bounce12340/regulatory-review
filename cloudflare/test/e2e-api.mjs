@@ -95,7 +95,7 @@ await step("create drug project from TFDA template (7 items, default deadline)",
 await step("new drug registration template carries review thresholds", async () => {
   const r = await a("POST", "/api/projects", { name: "NDA 測試", schema_type: "new_drug_registration" });
   assert.equal(r.status, 201, JSON.stringify(r.data));
-  assert.equal(r.data.items.length, 35);
+  assert.equal(r.data.items.length, 46);
   assert.ok(r.data.items.every((i) => Array.isArray(i.criteria) && i.criteria.length > 0));
   const rtf = r.data.items.find((i) => i.item_key === "m1_rtf");
   assert.equal(rtf.risk_level, "high");
