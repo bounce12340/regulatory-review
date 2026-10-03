@@ -557,6 +557,23 @@ async function updateUser(request: Request, env: Env, user: AuthUser, targetId: 
   return listUsers(env, user);
 }
 
+/** Removes a member for good. Their edit history stays, with the author left blank. */
+async function deleteUser(env: Env, user: AuthUser, targetId: number): Promise<Response> {
+  requireRole(user, "admin");
+  if (targetId === user.id) throw new HttpError(400, "不能刪除自己的帳號。");
+  const target = await env.DB.prepare("SELECT id FROM user WHERE id = ? AND company_id = ?")
+    .bind(targetId, user.company_id).first<{ id: number }>();
+  if (!target) throw new HttpError(404, "找不到此使用者。");
+  // Clear references explicitly rather than relying on ON DELETE SET NULL being enforced.
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM session WHERE user_id = ?").bind(target.id),
+    env.DB.prepare("UPDATE checklist_item SET updated_by = NULL WHERE updated_by = ?").bind(target.id),
+    env.DB.prepare("UPDATE project SET created_by = NULL WHERE created_by = ?").bind(target.id),
+    env.DB.prepare("DELETE FROM user WHERE id = ? AND company_id = ?").bind(target.id, user.company_id),
+  ]);
+  return listUsers(env, user);
+}
+
 // ── AI analysis ──────────────────────────────────────────────────────────────
 
 function aiConfig(env: Env): AiConfig | null {
@@ -609,6 +626,7 @@ const routes: Array<[string, RegExp, Handler]> = [
   ["GET", /^\/api\/users$/, ({ env, user }) => listUsers(env, user)],
   ["POST", /^\/api\/users$/, ({ request, env, user }) => createUser(request, env, user)],
   ["PATCH", /^\/api\/users\/(\d+)$/, ({ request, env, user, params }) => updateUser(request, env, user, idParam(params[0]))],
+  ["DELETE", /^\/api\/users\/(\d+)$/, ({ env, user, params }) => deleteUser(env, user, idParam(params[0]))],
   ["POST", /^\/api\/ai\/analyze$/, ({ request, env, user }) => analyze(request, env, user)],
 ];
 

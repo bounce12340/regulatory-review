@@ -1,5 +1,5 @@
 // Company user management (admin) and personal account settings.
-import { h, mount, toast, formData, busy, field } from "../lib/dom.js";
+import { h, mount, toast, formData, busy, field, confirmDialog } from "../lib/dom.js";
 import { api, state, ROLE_LABEL } from "../lib/api.js";
 
 const ROLES = ["admin", "member", "viewer"];
@@ -16,6 +16,18 @@ export async function renderUsers(main, _params, ctx) {
     } catch (err) { toast(err.message, "error"); ctx.rerender(); }
   };
 
+  const remove = async (u) => {
+    const ok = await confirmDialog(
+      `要刪除「${u.full_name}」（${u.email}）嗎？帳號會永久移除，對方立即登出。只是暫時不讓對方登入的話，改用「停用」即可。`,
+      { okLabel: "刪除帳號", danger: true });
+    if (!ok) return;
+    try {
+      await api("DELETE", `/api/users/${u.id}`);
+      toast(`已刪除「${u.full_name}」`);
+      ctx.rerender();
+    } catch (err) { toast(err.message, "error"); }
+  };
+
   mount(main,
     h("header", { class: "page-head" },
       h("h1", {}, "使用者管理"),
@@ -23,7 +35,7 @@ export async function renderUsers(main, _params, ctx) {
     h("section", { class: "sheet" },
       h("h2", { class: "sheet-title" }, "成員", h("span", { class: "aside" }, `${users.length} 位`)),
       h("div", { class: "table-wrap" }, h("table", { class: "members" },
-        h("thead", {}, h("tr", {}, ["姓名", "Email", "角色", "狀態", "最後登入"].map((t) => h("th", {}, t)))),
+        h("thead", {}, h("tr", {}, ["姓名", "Email", "角色", "狀態", "最後登入", ""].map((t) => h("th", {}, t)))),
         h("tbody", {}, users.map((u) => {
           const self = u.id === state.user.id;
           return h("tr", {},
@@ -39,6 +51,8 @@ export async function renderUsers(main, _params, ctx) {
                 h("input", { type: "checkbox", checked: u.is_active, onchange: (e) => update(u, { is_active: e.target.checked }) }),
                 u.is_active ? "啟用中" : "已停用")),
             h("td", { class: "small muted m-login" }, u.last_login ? u.last_login.slice(0, 16).replace("T", " ") : "—"),
+            h("td", { class: "m-del" }, self ? null
+              : h("button", { class: "btn btn-sm btn-danger", "aria-label": `刪除 ${u.full_name}`, onclick: () => remove(u) }, "刪除")),
           );
         })),
       )),
