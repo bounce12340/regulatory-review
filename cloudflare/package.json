@@ -12,14 +12,13 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p test",
     "test": "vitest run",
     "cf-typegen": "wrangler types",
-    "test:e2e": "node test/e2e-api.mjs"
-  },
-  "dependencies": {
-    "@anthropic-ai/sdk": "^0.131.0"
+    "test:e2e": "node test/e2e-api.mjs",
+    "vendor:pdfjs": "node scripts/vendor-pdfjs.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261001.1",
     "@types/node": "^26.6.3",
+    "pdfjs-dist": "^6.3.289",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3",
     "wrangler": "^4.145.0",

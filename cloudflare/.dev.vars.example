@@ -1,2 +1,3 @@
 # Copy to .dev.vars for local `wrangler dev`. Never commit .dev.vars.
-ANTHROPIC_API_KEY=sk-ant-...
+# Ollama API key from https://ollama.com/settings/keys (AI analysis is off without it).
+OLLAMA_API_KEY=

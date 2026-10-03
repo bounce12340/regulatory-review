@@ -1,4 +1,4 @@
-// AI document gap analysis: upload → (browser) extract text / pass PDF → Worker → Claude.
+// AI document gap analysis: upload → (browser) extract text → Worker → Ollama.
 import { h, mount, download, busy, field } from "../lib/dom.js";
 import { api, state, canEdit, RISK_LABEL } from "../lib/api.js";
 import { ACCEPT, prepareDocument } from "../lib/docparse.js";
@@ -19,8 +19,8 @@ export async function renderAi(main, _params, ctx) {
 
   if (!state.config.ai_enabled) {
     mount(main, header, h("div", { class: "notice warn" },
-      "AI 分析尚未啟用。請管理員在 Cloudflare 為這個 Worker 設定密鑰 ANTHROPIC_API_KEY，例如執行 ",
-      h("code", {}, "npx wrangler secret put ANTHROPIC_API_KEY"), "。"));
+      "AI 分析尚未啟用。請管理員在 Cloudflare 為這個 Worker 設定密鑰 OLLAMA_API_KEY，例如執行 ",
+      h("code", {}, "npx wrangler secret put OLLAMA_API_KEY"), "。"));
     return;
   }
   if (!canEdit()) {
@@ -49,7 +49,7 @@ export async function renderAi(main, _params, ctx) {
     ondrop: (e) => { e.preventDefault(); drop.classList.remove("drag"); pick(e.dataTransfer.files[0]); },
   },
     h("strong", {}, "選擇或拖曳文件到這裡"),
-    h("div", { class: "small" }, "PDF（含掃描檔）、Word .docx、Excel .xlsx、純文字，20 MB 以內"),
+    h("div", { class: "small" }, "含文字的 PDF、Word .docx、Excel .xlsx、純文字，20 MB 以內（掃描檔請先做 OCR）"),
     fileLine,
   );
 
@@ -59,10 +59,7 @@ export async function renderAi(main, _params, ctx) {
     try {
       await busy(analyzeBtn, async () => {
         const doc = await prepareDocument(file);
-        const body = { schema_type: schemaSelect.value, filename: file.name };
-        if (doc.kind === "pdf") body.pdf_base64 = doc.pdf_base64;
-        else body.text = doc.text;
-        lastResult = await api("POST", "/api/ai/analyze", body);
+        lastResult = await api("POST", "/api/ai/analyze", { schema_type: schemaSelect.value, filename: file.name, text: doc.text });
       }, "分析中，約需 30 秒到 2 分鐘");
       mount(results, report(lastResult));
       results.querySelector("h2")?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
@@ -79,7 +76,7 @@ export async function renderAi(main, _params, ctx) {
           field("申請類型", schemaSelect, "AI 會用這個類型的文件清單逐項比對"),
           analyzeBtn,
           h("p", { class: "help", style: "margin-top:12px" },
-            `使用模型 ${state.config.ai_model}。文件內容會傳送到 Anthropic API 分析，請勿上傳未經授權的機密資料。`),
+            `使用模型 ${state.config.ai_model}。文件會先在你的瀏覽器轉成文字，再傳送到 Ollama 雲端分析，請勿上傳未經授權的機密資料。`),
         ),
       ),
     ),
@@ -105,8 +102,7 @@ function report(r) {
       ),
       h("p", { style: "max-width:72ch" }, r.summary),
       h("p", { class: "help" },
-        `模型 ${r.model}，輸入 ${r.token_usage.input_tokens.toLocaleString()} tokens、輸出 ${r.token_usage.output_tokens.toLocaleString()} tokens，` +
-        `估計費用 US$${r.cost_usd.toFixed(4)}（約新台幣 ${r.cost_twd.toFixed(2)} 元）。`),
+        `模型 ${r.model}，輸入 ${r.token_usage.input_tokens.toLocaleString()} tokens、輸出 ${r.token_usage.output_tokens.toLocaleString()} tokens。`),
       h("div", { class: "notice", style: "margin:12px 0 0" },
         "AI 分析僅供內部初步檢查，不構成法規意見；送件前請由 RA 人員依 TFDA 現行公告確認。"),
     ),

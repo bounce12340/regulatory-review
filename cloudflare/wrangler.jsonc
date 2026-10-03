@@ -25,12 +25,11 @@
     }
   ],
 
-  // Non-secret settings. Secrets (ANTHROPIC_API_KEY) are set with
-  //   npx wrangler secret put ANTHROPIC_API_KEY
+  // Non-secret settings. The secret OLLAMA_API_KEY is set with
+  //   npx wrangler secret put OLLAMA_API_KEY
   "vars": {
-    "AI_MODEL": "claude-opus-5-5",
-    "AI_EFFORT": "high",
-    "USD_TO_TWD": "32",
+    // Ollama cloud model used for AI document analysis (list: https://ollama.com/api/tags).
+    "AI_MODEL": "deepseek-v4.1-flash",
     "ALLOW_REGISTRATION": "true",
     "SESSION_TTL_HOURS": "168",
     // 100000 ≈ 45 ms CPU per login. Workers Free allows 10 ms/request, so on the Free

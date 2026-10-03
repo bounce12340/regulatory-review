@@ -1,6 +1,9 @@
 // End-to-end API smoke test against a running instance.
 //   npx wrangler dev            (in another terminal; local D1 migrated)
 //   BASE_URL=http://127.0.0.1:8787 node test/e2e-api.mjs
+// To cover the AI path offline, start test/mock-ollama.mjs, run wrangler dev with
+//   --var OLLAMA_API_KEY:test-key --var AI_BASE_URL:http://127.0.0.1:8788
+// and set MOCK_OLLAMA_URL=http://127.0.0.1:8788 here.
 import assert from "node:assert/strict";
 
 const BASE = process.env.BASE_URL ?? "http://127.0.0.1:8787";
@@ -192,9 +195,37 @@ await step("only admin can delete a project", async () => {
 await step("AI endpoint: validation and missing-key handling", async () => {
   const cfg = (await a("GET", "/api/config")).data;
   const r = await a("POST", "/api/ai/analyze", { schema_type: "food_registration", filename: "a.txt", text: "產品配方" });
-  if (!cfg.ai_enabled) assert.equal(r.status, 503);
-  assert.equal((await a("POST", "/api/ai/analyze", { schema_type: "food_registration", filename: "a.pdf", pdf_base64: "@@notbase64" })).status, cfg.ai_enabled ? 400 : 503);
+  if (!cfg.ai_enabled) {
+    assert.equal(r.status, 503);
+  } else {
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal(r.data.completeness_score, 62);
+    assert.equal(r.data.gaps.length, 2);
+    assert.deepEqual(r.data.compliant_items, ["item1", "item2"]);
+    assert.equal(r.data.token_usage.input_tokens, 12000);
+  }
+  // PDFs are converted to text in the browser; a request without text is rejected.
+  assert.equal((await a("POST", "/api/ai/analyze", { schema_type: "food_registration", filename: "a.pdf", pdf_base64: "JVBERi0=" })).status, cfg.ai_enabled ? 400 : 503);
 });
+
+// Needs the mock Ollama server (test/mock-ollama.mjs); skipped against a real deployment.
+const mockUrl = process.env.MOCK_OLLAMA_URL;
+if (mockUrl) {
+  await step("AI request goes to Ollama /api/chat with a bearer key and the checklist", async () => {
+    const r = await a("POST", "/api/ai/analyze", { schema_type: "new_drug_registration", filename: "nda.txt", text: "3.2.S.4.1 規格" });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    const last = await (await fetch(`${mockUrl}/__last`)).json();
+    assert.equal(last.url, "/api/chat");
+    assert.equal(last.headers.authorization, "Bearer test-key");
+    assert.equal(last.headers["x-api-key"], undefined);
+    assert.equal(last.body.stream, true);
+    const [system, user] = last.body.messages;
+    assert.equal(system.role, "system");
+    assert.match(user.content, /<document filename="nda.txt">/);
+    assert.ok((user.content.match(/審查門檻：/g) ?? []).length > 100);
+    assert.match(user.content, /"completeness_score"/);
+  });
+}
 
 await step("password change, logout, login with new password", async () => {
   assert.equal((await a("POST", "/api/auth/password", { current_password: "wrong-pass", new_password: "new-password-1" })).status, 400);
