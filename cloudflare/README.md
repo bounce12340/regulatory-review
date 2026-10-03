@@ -40,7 +40,7 @@ TFDA 查驗登記文件審查與進度追蹤平台，部署在 **Cloudflare Work
 3. 儲存後即會部署。第一次部署時 Wrangler 會**自動建立 D1 資料庫** `regulatory-review`，接著自動套用 `migrations/` 內的資料表。
 4. 到該 Worker 的 **Settings → Variables and Secrets** 新增 Secret：`OLLAMA_API_KEY`（在 [ollama.com/settings/keys](https://ollama.com/settings/keys) 建立；若不需要 AI 分析可略過，該頁會顯示「尚未啟用」）。
 5. 打開 `https://regulatory-review.<你的子網域>.workers.dev` 註冊第一個帳號。
-6. （建議）完成自己公司的註冊後，把 `wrangler.jsonc` 的 `ALLOW_REGISTRATION` 改成 `"false"` 並推送，之後只能由管理員在「使用者管理」新增成員。
+6. `wrangler.jsonc` 的 `ALLOW_REGISTRATION` 預設為 `"false"`（不開放註冊）。全新部署時先改成 `"true"`，註冊好自己公司的帳號後再改回 `"false"`，之後只能由管理員在「使用者管理」新增成員。
 
 之後每次 push 到 main 都會自動重新部署。
 
@@ -79,7 +79,7 @@ Worker → **Settings → Domains & Routes → Add → Custom domain**，輸入�
 |------|------|------|
 | `AI_MODEL` | `deepseek-v4.1-flash` | AI 分析使用的 Ollama 雲端模型，可用名稱見 [ollama.com/api/tags](https://ollama.com/api/tags) |
 | `AI_BASE_URL` | `https://ollama.com` | 選填。改成自架 Ollama 伺服器的網址時，須能從 Cloudflare 連到（不能是 `localhost`） |
-| `ALLOW_REGISTRATION` | `true` | 是否開放任何人註冊新公司 |
+| `ALLOW_REGISTRATION` | `false` | 是否開放任何人註冊新公司（本機跑 `npm run test:e2e` 時需在 `.dev.vars` 設為 `true`） |
 | `SESSION_TTL_HOURS` | `168` | 登入有效時間（小時） |
 | `PBKDF2_ITERATIONS` | `100000` | 密碼雜湊強度（10,000–100,000），見上方方案說明 |
 
