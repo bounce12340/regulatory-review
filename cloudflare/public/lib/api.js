@@ -7,6 +7,28 @@ export class ApiError extends Error {
   }
 }
 
+/** Uploads one file as multipart form data; errors surface like api(). */
+export async function upload(path, file) {
+  const body = new FormData();
+  body.append("file", file);
+  let res;
+  try {
+    res = await fetch(path, { method: "POST", body, credentials: "same-origin" });
+  } catch {
+    throw new ApiError(0, "無法連線至伺服器，請檢查網路。");
+  }
+  let data = null;
+  try { data = await res.json(); } catch { /* non-JSON error body */ }
+  if (!res.ok) throw new ApiError(res.status, data?.error ?? `上傳失敗（${res.status}）`);
+  return data;
+}
+
+export function fileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 export async function api(method, path, body) {
   const init = { method, headers: {}, credentials: "same-origin" };
   if (body !== undefined) {

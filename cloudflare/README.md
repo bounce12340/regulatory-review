@@ -22,6 +22,7 @@ TFDA 查驗登記文件審查與進度追蹤平台，部署在 **Cloudflare Work
 | 國外藥廠 PMF 審查 | 依 115.04.27 修訂之「國外藥廠工廠資料準備須知」建立 10 種 PMF 申請類型（非無菌／無菌／ATMPs・生物產品 × 全套／簡化，三種引用，擴建廠房）及國外藥廠 GMP 實地查核申請；各類型只列該申請方式應附之表A、表B、表C-1 項目與簡化／確效替代／引用文件（見 `docs/PMF_REVIEW_THRESHOLDS.md`） |
 | 專案管理 | 依申請類型（藥品展延 / 食品登記 / 醫材登記）自動帶入 TFDA 檢查項目，可建立、編輯、結案、封存、刪除 |
 | 專案總覽 | KPI、完成度、狀態與風險分布、可直接修改狀態與備註的檢查清單、待辦事項 |
+| 檢查項目附件 | 每個檢查項目可附加檔案（PDF、Office、文字、CSV、PNG/JPG、ZIP、.msg；單檔 25 MB、每項最多 20 個），存於 R2；成員以上可上傳與刪除，檢視者可下載；刪除項目或案件時一併刪除檔案 |
 | 風險自動判定 | 範本項目的風險依 `config/regulatory_schemas.yaml` 的 `risk_rules` 隨狀態自動計算；自訂項目可手動設定 |
 | 時程 / 多專案比較 | 截止日倒數、完成度與時程消耗對照、健康雷達圖 |
 | AI 文件分析 | 上傳含文字的 PDF、Word .docx、Excel .xlsx、純文字 → 瀏覽器轉成文字 → Ollama 雲端模型逐項比對檢查清單 → 缺口報告 |
@@ -37,10 +38,11 @@ TFDA 查驗登記文件審查與進度追蹤平台，部署在 **Cloudflare Work
    - **Root directory**：`cloudflare`
    - **Build command**：留空
    - **Deploy command**：`npm run deploy`
-3. 儲存後即會部署。第一次部署時 Wrangler 會**自動建立 D1 資料庫** `regulatory-review`，接著自動套用 `migrations/` 內的資料表。
-4. 到該 Worker 的 **Settings → Variables and Secrets** 新增 Secret：`OLLAMA_API_KEY`（在 [ollama.com/settings/keys](https://ollama.com/settings/keys) 建立；若不需要 AI 分析可略過，該頁會顯示「尚未啟用」）。
-5. 打開 `https://regulatory-review.<你的子網域>.workers.dev` 註冊第一個帳號。
-6. `wrangler.jsonc` 的 `ALLOW_REGISTRATION` 預設為 `"false"`（不開放註冊）。全新部署時先改成 `"true"`，註冊好自己公司的帳號後再改回 `"false"`，之後只能由管理員在「使用者管理」新增成員。
+3. 部署前先建立附件用的 R2 bucket（只需一次）：`npx wrangler r2 bucket create regulatory-review-files`，或在 Dashboard → **R2** 建立同名 bucket。
+4. 儲存後即會部署。第一次部署時 Wrangler 會**自動建立 D1 資料庫** `regulatory-review`，接著自動套用 `migrations/` 內的資料表。
+5. 到該 Worker 的 **Settings → Variables and Secrets** 新增 Secret：`OLLAMA_API_KEY`（在 [ollama.com/settings/keys](https://ollama.com/settings/keys) 建立；若不需要 AI 分析可略過，該頁會顯示「尚未啟用」）。
+6. 打開 `https://regulatory-review.<你的子網域>.workers.dev` 註冊第一個帳號。
+7. `wrangler.jsonc` 的 `ALLOW_REGISTRATION` 預設為 `"false"`（不開放註冊）。全新部署時先改成 `"true"`，註冊好自己公司的帳號後再改回 `"false"`，之後只能由管理員在「使用者管理」新增成員。
 
 之後每次 push 到 main 都會自動重新部署。
 
@@ -52,6 +54,7 @@ TFDA 查驗登記文件審查與進度追蹤平台，部署在 **Cloudflare Work
 cd cloudflare
 npm ci
 npx wrangler login                       # 瀏覽器授權
+npx wrangler r2 bucket create regulatory-review-files   # 附件儲存（只需一次）
 npm run deploy                           # 部署 + 建立/遷移 D1
 npx wrangler secret put OLLAMA_API_KEY  # 貼上 Ollama API 金鑰
 ```

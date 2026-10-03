@@ -1,7 +1,7 @@
 // Project overview: case header (seal + document strip), checklist form, side rail.
 import { h, mount, toast, download, formData, busy, confirmDialog, textDialog, field } from "../lib/dom.js";
 import {
-  api, state, canEdit, refreshProjects, timelineElapsed, alertText,
+  api, upload, fileSize, state, canEdit, refreshProjects, timelineElapsed, alertText,
   STATUS_LABEL, RISK_LABEL, OVERALL_LABEL,
 } from "../lib/api.js";
 import { docStrip, stripLegend, meter, seal } from "../lib/charts.js";
@@ -327,6 +327,7 @@ function itemRow(item, n, save, onDetail) {
       item.criteria?.length ? h("details", { class: "criteria" },
         h("summary", {}, `審查門檻（${item.criteria.length} 項）`),
         h("ul", {}, item.criteria.map((c) => h("li", {}, c)))) : null,
+      attachments(item, editable, onDetail),
     ),
     h("td", { class: "c-status" }, editable
       ? h("select", {
@@ -376,6 +377,46 @@ function itemRow(item, n, save, onDetail) {
   );
 }
 
+/** Files attached to a checklist item: download links, plus add/delete for editors. */
+function attachments(item, editable, onDetail) {
+  const files = item.attachments ?? [];
+  if (!files.length && !editable) return null;
+  const limits = state.config.attachments;
+
+  const add = async (picked) => {
+    for (const f of picked) {
+      const ext = f.name.includes(".") ? f.name.split(".").pop().toLowerCase() : "";
+      if (limits && !limits.extensions.includes(ext)) { toast(`「${f.name}」的檔案類型不支援。`, "error"); continue; }
+      if (limits && f.size > limits.max_bytes) { toast(`「${f.name}」超過 ${fileSize(limits.max_bytes)} 上限。`, "error"); continue; }
+      try {
+        toast(`上傳中：${f.name}`);
+        onDetail(await upload(`/api/items/${item.id}/attachments`, f));
+        toast(`已附加「${f.name}」`);
+      } catch (err) { toast(err.message, "error"); }
+    }
+  };
+  const input = h("input", {
+    type: "file", multiple: true, class: "sr-only",
+    accept: limits ? limits.extensions.map((e) => `.${e}`).join(",") : null,
+    onchange: (e) => { const picked = [...e.target.files]; e.target.value = ""; add(picked); },
+  });
+
+  return h("div", { class: "attachments" },
+    files.length ? h("ul", {}, files.map((a) => h("li", {},
+      h("a", { href: `/api/attachments/${a.id}`, title: a.uploaded_by_name ? `${a.uploaded_by_name} 上傳於 ${a.created_at.slice(0, 10)}` : null }, a.filename),
+      h("span", { class: "muted" }, fileSize(a.size_bytes)),
+      editable ? h("button", {
+        class: "link-btn danger no-print", "aria-label": `刪除附件 ${a.filename}`,
+        onclick: async () => {
+          if (!(await confirmDialog(`刪除附件「${a.filename}」？檔案會永久移除。`, { okLabel: "刪除附件", danger: true }))) return;
+          try { onDetail(await api("DELETE", `/api/attachments/${a.id}`)); toast("已刪除附件"); } catch (err) { toast(err.message, "error"); }
+        },
+      }, "刪除") : null,
+    ))) : null,
+    editable ? h("label", { class: "attach-add no-print" }, input, files.length ? "再附加檔案" : "附加檔案") : null,
+  );
+}
+
 function addItemForm(detail, onDetail) {
   return h("details", { class: "disclose no-print", style: "margin-top:16px" },
     h("summary", {}, "新增自訂文件項目"),
@@ -415,9 +456,9 @@ function toMarkdown({ project, summary, items, action_items, rtf }) {
     "",
     "## 文件檢查清單",
     "",
-    "| # | 文件 | 狀態 | 風險 | 備註 |",
-    "|---|------|------|------|------|",
-    ...displayOrder(items).map((i, n) => `| ${n + 1} | ${esc(i.item_name)} | ${STATUS_LABEL[i.status]} | ${RISK_LABEL[i.risk_level]} | ${esc(i.notes)} |`),
+    "| # | 文件 | 狀態 | 風險 | 備註 | 附件 |",
+    "|---|------|------|------|------|------|",
+    ...displayOrder(items).map((i, n) => `| ${n + 1} | ${esc(i.item_name)} | ${STATUS_LABEL[i.status]} | ${RISK_LABEL[i.risk_level]} | ${esc(i.notes)} | ${esc((i.attachments ?? []).map((a) => a.filename).join("、"))} |`),
   ];
   if (rtf) {
     lines.push("", "## RTF 退件判定（自我檢核）", "", `- **若現在送件：** ${rtf.verdict === "refuse" ? "退件" : "續審"}`);
