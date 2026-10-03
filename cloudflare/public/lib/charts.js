@@ -33,10 +33,13 @@ export function meter(label, pct, { warn = false } = {}) {
       h("div", { class: `meter-fill${warn ? " warn" : ""}`, style: `width:${value ?? 0}%` })));
 }
 
-/** The case status stamp. */
-export function seal(overall) {
+/** The case status stamp. Red only when `alert` (overdue, due soon or blocked). */
+export function seal(overall, alert = "") {
   // Four characters, read like a real seal: vertical columns, right to left.
-  return h("div", { class: `seal ${overall}`, role: "img", "aria-label": `整體狀態：${OVERALL_LABEL[overall]}` },
+  return h("div", {
+    class: `seal ${overall}${alert ? " alert" : ""}`, role: "img",
+    "aria-label": `整體狀態：${OVERALL_LABEL[overall]}${alert ? `（${alert}）` : ""}`,
+  },
     h("div", { class: "seal-text", "aria-hidden": "true" }, [...(OVERALL_LABEL[overall] ?? "")].map((ch) => h("span", {}, ch))));
 }
 
@@ -67,7 +70,8 @@ export function gantt(projects, today) {
         const left = pos(start);
         const width = Math.max(0.5, pos(p.deadline) - left);
         const days = p.summary.days_left;
-        const late = days < 0 || (days < 30 && p.summary.completion_rate < 100);
+        const reasons = p.summary.alert_reasons ?? [];
+        const late = reasons.includes("overdue") || reasons.includes("due_soon");
         // Deadline label hangs under the bar's end; right-aligned unless the bar is short and near the start.
         const flip = left + width > 40;
         return h("div", { class: "gantt-row" },
@@ -79,7 +83,7 @@ export function gantt(projects, today) {
               class: `gantt-bar${late ? " late" : ""}`, style: `left:${left}%;width:${width}%`,
               role: "img", "aria-label": `${p.name}：完成 ${p.summary.completion_rate}%，截止 ${p.deadline}`,
             }, h("div", { class: "done", style: `width:${p.summary.completion_rate}%` })),
-            h("div", { class: `gantt-end${days < 30 ? " alert" : ""}${flip ? " flip" : ""}`, style: `left:${left + width}%` },
+            h("div", { class: `gantt-end${late ? " alert" : ""}${flip ? " flip" : ""}`, style: `left:${left + width}%` },
               h("b", {}, days < 0 ? `逾期 ${-days} 天` : `剩 ${days} 天`), `　截止 ${p.deadline}`)),
         );
       }),

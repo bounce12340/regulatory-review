@@ -1,7 +1,7 @@
 // Project overview: case header (seal + document strip), checklist form, side rail.
 import { h, mount, toast, download, formData, busy, confirmDialog, field } from "../lib/dom.js";
 import {
-  api, state, canEdit, refreshProjects, timelineElapsed,
+  api, state, canEdit, refreshProjects, timelineElapsed, alertText,
   STATUS_LABEL, RISK_LABEL, OVERALL_LABEL,
 } from "../lib/api.js";
 import { docStrip, stripLegend, meter, seal } from "../lib/charts.js";
@@ -9,6 +9,8 @@ import { docStrip, stripLegend, meter, seal } from "../lib/charts.js";
 const STATUSES = ["pending", "in_progress", "under_review", "blocked", "completed"];
 const RISKS = ["low", "medium", "high"];
 const TODO_LIMIT = 6;
+// Below this share of elapsed time a timeline meter says nothing useful yet.
+const TIMELINE_MIN_ELAPSED = 5;
 
 // Checklist sections, in CTD order. Schemas whose categories don't match any of these
 // (the food / device / import templates) keep a flat list.
@@ -95,7 +97,8 @@ function view(detail, filters, { onDetail, onFilter, animate }) {
   const { project, summary, items, action_items } = detail;
   const elapsed = timelineElapsed(project, state.today);
   const behind = elapsed !== null && elapsed > summary.completion_rate;
-  const stamp = seal(summary.overall_status);
+  const urgent = alertText(summary);
+  const stamp = seal(summary.overall_status, urgent);
   if (!animate) stamp.style.animation = "none";
 
   return [
@@ -108,9 +111,11 @@ function view(detail, filters, { onDetail, onFilter, animate }) {
         fact("文件完成", summary.completed, `／ ${summary.total} 份`),
         fact("截止日", project.deadline ?? "未設定"),
         fact("剩餘", summary.days_left === null ? "—" : summary.days_left < 0 ? `逾期 ${-summary.days_left}` : summary.days_left, "天",
-          summary.days_left !== null && summary.days_left < 30),
-        fact("高風險", summary.high_risk_items, "項", summary.high_risk_items > 0),
+          summary.alert_reasons.includes("overdue") || summary.alert_reasons.includes("due_soon")),
+        fact("高風險", summary.high_risk_items, "項", summary.alert && summary.high_risk_items > 0),
+        summary.blocked_items ? fact("受阻", summary.blocked_items, "項", true) : null,
       ),
+      urgent ? h("p", { class: "case-alert" }, `需要立即處理：${urgent}。`) : null,
       docStrip(items),
       stripLegend(summary.status_counts),
     ),
@@ -142,9 +147,13 @@ function view(detail, filters, { onDetail, onFilter, animate }) {
         h("section", { class: "sheet" },
           h("h2", { class: "sheet-title" }, "時程"),
           meter("文件完成度", summary.completion_rate),
-          meter("時程已過（建立日至截止日）", elapsed, { warn: behind }),
-          elapsed === null ? null : h("p", { class: `verdict${behind ? " late" : ""}` },
-            behind ? "時程消耗已超過文件完成度，進度落後。" : "文件完成度跟得上時程。"),
+          elapsed !== null && elapsed < TIMELINE_MIN_ELAPSED
+            ? h("p", { class: "verdict" }, `案件剛開始，剩 ${summary.days_left} 天。時程過了 ${TIMELINE_MIN_ELAPSED}% 之後，這裡會比較時程與文件完成度。`)
+            : [
+              meter("時程已過（建立日至截止日）", elapsed, { warn: behind }),
+              elapsed === null ? null : h("p", { class: `verdict${behind ? " late" : ""}` },
+                behind ? "時程消耗已超過文件完成度，進度落後。" : "文件完成度跟得上時程。"),
+            ],
         ),
         h("section", { class: "sheet" },
           h("h2", { class: "sheet-title" }, "待辦", h("span", { class: "aside" }, `${action_items.length} 項`)),

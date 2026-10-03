@@ -313,7 +313,7 @@ async function projectDetail(env: Env, project: ProjectRow) {
   return {
     project: { ...project, schema_name: SCHEMAS[project.schema_type]?.display_name_zh ?? project.schema_type },
     items: decorateItems(project.schema_type, items),
-    summary: summarize(items, project.deadline),
+    summary: summarize(items, project.deadline, undefined, project.status === "active"),
     action_items: actionItems(project.schema_type, items),
   };
 }
@@ -344,7 +344,7 @@ async function listProjects(url: URL, env: Env, user: AuthUser): Promise<Respons
     projects: projects.map((p) => ({
       ...p,
       schema_name: SCHEMAS[p.schema_type]?.display_name_zh ?? p.schema_type,
-      summary: summarize(byProject.get(p.id) ?? [], p.deadline, today),
+      summary: summarize(byProject.get(p.id) ?? [], p.deadline, today, p.status === "active"),
     })),
   });
 }

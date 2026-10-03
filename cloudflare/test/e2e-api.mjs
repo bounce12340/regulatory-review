@@ -99,6 +99,10 @@ await step("new drug registration template carries review thresholds", async () 
   const cpp = r.data.items.find((i) => i.item_key === "m1_cpp");
   assert.equal(cpp.required, false);
   assert.equal(r.data.summary.days_left, 180);
+  // A fresh case with a distant deadline is not flagged red, however low its completion.
+  assert.equal(r.data.summary.overall_status, "needs_attention");
+  assert.equal(r.data.summary.alert, false);
+  assert.deepEqual(r.data.summary.alert_reasons, []);
   assert.equal((await a("DELETE", `/api/projects/${r.data.project.id}`)).status, 200);
 });
 

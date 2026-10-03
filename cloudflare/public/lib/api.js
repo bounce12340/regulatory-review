@@ -65,7 +65,22 @@ export const OVERALL_LABEL = {
   in_progress: "接近完成",
   needs_attention: "尚待補齊",
 };
-export const OVERALL_CLASS = { ready_for_submission: "b-ok", in_progress: "b-info", needs_attention: "b-danger" };
+/** Why a case is flagged red, e.g. 「距截止日 12 天、2 項受阻」; empty when nothing is urgent. */
+export function alertText(summary) {
+  const label = {
+    overdue: () => `已逾期 ${-summary.days_left} 天`,
+    due_soon: () => `距截止日 ${summary.days_left} 天`,
+    blocked: () => `${summary.blocked_items} 項受阻`,
+  };
+  return (summary.alert_reasons ?? []).map((r) => label[r]()).join("、");
+}
+
+/** Status tag for the case lists: red only when the case needs action now. */
+export function overallTag(summary) {
+  const why = alertText(summary);
+  return { class: `tag ${summary.overall_status}${summary.alert ? " alert" : ""}`, title: why || null };
+}
+
 export const PROJECT_STATUS_LABEL = { active: "進行中", archived: "已封存", completed: "已結案" };
 export const ROLE_LABEL = { admin: "管理員", member: "成員", viewer: "檢視者" };
 
@@ -77,15 +92,6 @@ export async function refreshProjects() {
     state.currentProjectId = state.projects[0]?.id ?? null;
   }
   return state.projects;
-}
-
-/** Urgency bucket used by the original dashboard: <30 days red, <90 amber, else green. */
-export function urgency(daysLeft) {
-  if (daysLeft === null || daysLeft === undefined) return { cls: "b-neutral", k: "k-violet", label: "未設定" };
-  if (daysLeft < 0) return { cls: "b-danger", k: "k-red", label: `已逾期 ${-daysLeft} 天` };
-  if (daysLeft < 30) return { cls: "b-danger", k: "k-red", label: "截止日緊迫" };
-  if (daysLeft < 90) return { cls: "b-warn", k: "k-amber", label: "截止日將近" };
-  return { cls: "b-ok", k: "k-green", label: "時程充裕" };
 }
 
 export function daysBetween(fromIso, toIso) {

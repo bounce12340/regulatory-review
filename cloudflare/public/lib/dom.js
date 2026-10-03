@@ -45,6 +45,8 @@ export function mount(target, ...nodes) {
 export function toast(message, kind = "info") {
   const host = document.getElementById("toast");
   const el = h("div", { class: `toast ${kind === "error" ? "error" : ""}` }, message);
+  // Keep at most two on screen so a burst of saves doesn't stack over the checklist.
+  while (host.children.length >= 2) host.firstElementChild.remove();
   host.appendChild(el);
   setTimeout(() => el.remove(), kind === "error" ? 6000 : 3000);
 }
