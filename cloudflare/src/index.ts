@@ -12,6 +12,9 @@ import {
 import { AnalysisError, analyzeDocument, MAX_TEXT_CHARS, type AiConfig } from "./ai";
 import { actionItems, rtfVerdict, summarize, todayTaipei, type ItemRow, type ProjectRow } from "./report";
 import {
+  ATTACHMENT_TYPES, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_ITEM, cleanFilename, contentDisposition, extensionOf,
+} from "./attachments";
+import {
   findTemplateItem, isSchemaType, ITEM_STATUSES, RISK_LEVELS, riskFor, SCHEMAS,
   type ItemStatus, type RiskLevel,
 } from "./schemas";
@@ -19,6 +22,8 @@ import {
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
+  /** R2 bucket holding files attached to checklist items. */
+  FILES: R2Bucket;
   /** Secret: Ollama API key (https://ollama.com/settings/keys). AI analysis is off without it. */
   OLLAMA_API_KEY?: string;
   /** Ollama API base URL; defaults to Ollama's cloud (https://ollama.com). */
@@ -308,11 +313,30 @@ function decorateItems(schemaType: string, items: ItemRow[]) {
   });
 }
 
+interface AttachmentInfo {
+  id: number; item_id: number; filename: string; size_bytes: number; created_at: string; uploaded_by_name: string | null;
+}
+
+async function projectAttachments(env: Env, projectId: number): Promise<Map<number, AttachmentInfo[]>> {
+  const { results } = await env.DB.prepare(
+    `SELECT a.id, a.item_id, a.filename, a.size_bytes, a.created_at, u.full_name AS uploaded_by_name
+       FROM attachment a LEFT JOIN user u ON u.id = a.uploaded_by
+      WHERE a.project_id = ? ORDER BY a.created_at, a.id`,
+  ).bind(projectId).all<AttachmentInfo>();
+  const byItem = new Map<number, AttachmentInfo[]>();
+  for (const a of results) {
+    const list = byItem.get(a.item_id) ?? [];
+    list.push(a);
+    byItem.set(a.item_id, list);
+  }
+  return byItem;
+}
+
 async function projectDetail(env: Env, project: ProjectRow) {
-  const items = await projectItems(env, project.id);
+  const [items, files] = await Promise.all([projectItems(env, project.id), projectAttachments(env, project.id)]);
   return {
     project: { ...project, schema_name: SCHEMAS[project.schema_type]?.display_name_zh ?? project.schema_type },
-    items: decorateItems(project.schema_type, items),
+    items: decorateItems(project.schema_type, items).map((i) => ({ ...i, attachments: files.get(i.id) ?? [] })),
     summary: summarize(items, project.deadline, undefined, project.status === "active"),
     action_items: actionItems(project.schema_type, items),
     rtf: rtfVerdict(project.schema_type, items),
@@ -435,10 +459,13 @@ async function updateProject(request: Request, env: Env, user: AuthUser, id: num
 async function deleteProject(env: Env, user: AuthUser, id: number): Promise<Response> {
   requireRole(user, "admin");
   await getProject(env, user, id);
+  const keys = await attachmentKeys(env, "project_id", id);
   await env.DB.batch([
+    env.DB.prepare("DELETE FROM attachment WHERE project_id = ?").bind(id),
     env.DB.prepare("DELETE FROM checklist_item WHERE project_id = ?").bind(id),
     env.DB.prepare("DELETE FROM project WHERE id = ? AND company_id = ?").bind(id, user.company_id),
   ]);
+  await deleteObjects(env, keys);
   return json({ ok: true });
 }
 
@@ -511,8 +538,106 @@ async function updateItem(request: Request, env: Env, user: AuthUser, itemId: nu
 async function deleteItem(env: Env, user: AuthUser, itemId: number): Promise<Response> {
   requireRole(user, "admin", "member");
   const item = await itemWithProject(env, user, itemId);
-  await env.DB.prepare("DELETE FROM checklist_item WHERE id = ?").bind(item.id).run();
+  const keys = await attachmentKeys(env, "item_id", item.id);
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM attachment WHERE item_id = ?").bind(item.id),
+    env.DB.prepare("DELETE FROM checklist_item WHERE id = ?").bind(item.id),
+  ]);
+  await deleteObjects(env, keys);
   return json(await projectDetail(env, await getProject(env, user, item.project_id)));
+}
+
+// ── Attachments (files on checklist items, stored in R2) ─────────────────────
+
+async function attachmentKeys(env: Env, column: "item_id" | "project_id", id: number): Promise<string[]> {
+  const { results } = await env.DB.prepare(`SELECT r2_key FROM attachment WHERE ${column} = ?`).bind(id).all<{ r2_key: string }>();
+  return results.map((r) => r.r2_key);
+}
+
+/** Removes stored files after their rows are gone; a failure only leaves an orphan object, so it is logged, not raised. */
+async function deleteObjects(env: Env, keys: string[]): Promise<void> {
+  for (let i = 0; i < keys.length; i += 1000) {
+    try {
+      await env.FILES.delete(keys.slice(i, i + 1000));
+    } catch (err) {
+      console.error("R2 delete failed", err);
+    }
+  }
+}
+
+async function attachmentRow(env: Env, user: AuthUser, id: number) {
+  const row = await env.DB.prepare(
+    "SELECT id, project_id, item_id, r2_key, filename, size_bytes FROM attachment WHERE id = ? AND company_id = ?",
+  ).bind(id, user.company_id).first<{ id: number; project_id: number; item_id: number; r2_key: string; filename: string; size_bytes: number }>();
+  if (!row) throw new HttpError(404, "找不到此附件。");
+  return row;
+}
+
+async function uploadAttachment(request: Request, env: Env, user: AuthUser, itemId: number): Promise<Response> {
+  requireRole(user, "admin", "member");
+  const item = await itemWithProject(env, user, itemId);
+  // Multipart overhead is small; reject clearly oversized requests before reading them.
+  if (Number(request.headers.get("Content-Length") ?? "0") > MAX_ATTACHMENT_BYTES + 64 * 1024) {
+    throw new HttpError(413, "檔案超過 25 MB 上限。");
+  }
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    throw new HttpError(400, "請以表單方式上傳檔案。");
+  }
+  const file = form.get("file");
+  if (!file || typeof file === "string") throw new HttpError(400, "請選擇要上傳的檔案。");
+  const filename = cleanFilename(file.name);
+  const contentType = ATTACHMENT_TYPES[extensionOf(filename)];
+  if (!filename || !contentType) {
+    throw new HttpError(400, "不支援此檔案類型。可上傳 PDF、Word、Excel、PowerPoint、文字、CSV、圖片（PNG／JPG）、ZIP 或 Outlook 郵件（.msg）。");
+  }
+  if (file.size === 0) throw new HttpError(400, "檔案是空的。");
+  if (file.size > MAX_ATTACHMENT_BYTES) throw new HttpError(413, "檔案超過 25 MB 上限。");
+  const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM attachment WHERE item_id = ?").bind(item.id).first<{ n: number }>();
+  if ((count?.n ?? 0) >= MAX_ATTACHMENTS_PER_ITEM) {
+    throw new HttpError(400, `每個項目最多 ${MAX_ATTACHMENTS_PER_ITEM} 個附件，請先刪除不需要的檔案。`);
+  }
+
+  // The key carries no part of the filename, so a name can never steer where it is stored.
+  const key = `${user.company_id}/${item.project_id}/${item.id}/${crypto.randomUUID()}`;
+  await env.FILES.put(key, file, { httpMetadata: { contentType } });
+  try {
+    await env.DB.prepare(
+      `INSERT INTO attachment (company_id, project_id, item_id, r2_key, filename, content_type, size_bytes, uploaded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(user.company_id, item.project_id, item.id, key, filename, contentType, file.size, user.id).run();
+  } catch (err) {
+    await deleteObjects(env, [key]);
+    throw err;
+  }
+  return json(await projectDetail(env, await getProject(env, user, item.project_id)), 201);
+}
+
+async function downloadAttachment(env: Env, user: AuthUser, id: number): Promise<Response> {
+  const row = await attachmentRow(env, user, id);
+  const object = await env.FILES.get(row.r2_key);
+  if (!object) throw new HttpError(404, "找不到此附件的檔案內容。");
+  return new Response(object.body, {
+    headers: {
+      "Content-Type": ATTACHMENT_TYPES[extensionOf(row.filename)] ?? "application/octet-stream",
+      "Content-Length": String(object.size),
+      "Content-Disposition": contentDisposition(row.filename),
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+      // Uploaded content is never rendered as part of this site.
+      "Content-Security-Policy": "default-src 'none'; sandbox",
+    },
+  });
+}
+
+async function deleteAttachment(env: Env, user: AuthUser, id: number): Promise<Response> {
+  requireRole(user, "admin", "member");
+  const row = await attachmentRow(env, user, id);
+  await env.DB.prepare("DELETE FROM attachment WHERE id = ?").bind(row.id).run();
+  await deleteObjects(env, [row.r2_key]);
+  return json(await projectDetail(env, await getProject(env, user, row.project_id)));
 }
 
 // ── Users (admin) ────────────────────────────────────────────────────────────
@@ -569,6 +694,7 @@ async function deleteUser(env: Env, user: AuthUser, targetId: number): Promise<R
     env.DB.prepare("DELETE FROM session WHERE user_id = ?").bind(target.id),
     env.DB.prepare("UPDATE checklist_item SET updated_by = NULL WHERE updated_by = ?").bind(target.id),
     env.DB.prepare("UPDATE project SET created_by = NULL WHERE created_by = ?").bind(target.id),
+    env.DB.prepare("UPDATE attachment SET uploaded_by = NULL WHERE uploaded_by = ?").bind(target.id),
     env.DB.prepare("DELETE FROM user WHERE id = ? AND company_id = ?").bind(target.id, user.company_id),
   ]);
   return listUsers(env, user);
@@ -623,6 +749,9 @@ const routes: Array<[string, RegExp, Handler]> = [
   ["POST", /^\/api\/projects\/(\d+)\/items$/, ({ request, env, user, params }) => createItem(request, env, user, idParam(params[0]))],
   ["PATCH", /^\/api\/items\/(\d+)$/, ({ request, env, user, params }) => updateItem(request, env, user, idParam(params[0]))],
   ["DELETE", /^\/api\/items\/(\d+)$/, ({ env, user, params }) => deleteItem(env, user, idParam(params[0]))],
+  ["POST", /^\/api\/items\/(\d+)\/attachments$/, ({ request, env, user, params }) => uploadAttachment(request, env, user, idParam(params[0]))],
+  ["GET", /^\/api\/attachments\/(\d+)$/, ({ env, user, params }) => downloadAttachment(env, user, idParam(params[0]))],
+  ["DELETE", /^\/api\/attachments\/(\d+)$/, ({ env, user, params }) => deleteAttachment(env, user, idParam(params[0]))],
   ["GET", /^\/api\/users$/, ({ env, user }) => listUsers(env, user)],
   ["POST", /^\/api\/users$/, ({ request, env, user }) => createUser(request, env, user)],
   ["PATCH", /^\/api\/users\/(\d+)$/, ({ request, env, user, params }) => updateUser(request, env, user, idParam(params[0]))],
@@ -649,6 +778,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       registration_enabled: (env.ALLOW_REGISTRATION ?? "true") === "true",
       ai_enabled: Boolean(cfg),
       ai_model: cfg?.model ?? null,
+      attachments: { max_bytes: MAX_ATTACHMENT_BYTES, extensions: Object.keys(ATTACHMENT_TYPES) },
       today: todayTaipei(),
     });
   }

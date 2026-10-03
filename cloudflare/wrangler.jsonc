@@ -25,6 +25,12 @@
     }
   ],
 
+  // Files attached to checklist items. Create once with
+  //   npx wrangler r2 bucket create regulatory-review-files
+  "r2_buckets": [
+    { "binding": "FILES", "bucket_name": "regulatory-review-files" }
+  ],
+
   // Non-secret settings. The secret OLLAMA_API_KEY is set with
   //   npx wrangler secret put OLLAMA_API_KEY
   "vars": {

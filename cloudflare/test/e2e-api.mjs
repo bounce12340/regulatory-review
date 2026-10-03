@@ -12,15 +12,19 @@ const run = Date.now().toString(36);
 function client() {
   let cookie = "";
   return async function call(method, path, body, headers = {}) {
+    // FormData bodies (file uploads) go as multipart; fetch sets the boundary header.
+    const isForm = body instanceof FormData;
     const res = await fetch(BASE + path, {
       method,
-      headers: { ...(body !== undefined ? { "Content-Type": "application/json" } : {}), ...(cookie ? { Cookie: cookie } : {}), ...headers },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      headers: { ...(body !== undefined && !isForm ? { "Content-Type": "application/json" } : {}), ...(cookie ? { Cookie: cookie } : {}), ...headers },
+      body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
     });
     const set = res.headers.get("set-cookie");
     if (set) cookie = set.split(";")[0];
-    const data = await res.json().catch(() => null);
-    return { status: res.status, data, headers: res.headers };
+    const text = await res.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch { /* not JSON, e.g. a downloaded file */ }
+    return { status: res.status, data, text, headers: res.headers };
   };
 }
 
@@ -240,6 +244,52 @@ await step("admin adds a viewer; viewer is read-only", async () => {
   assert.equal((await viewer("POST", "/api/projects", { name: "x", schema_type: "food_registration" })).status, 403);
   assert.equal((await viewer("GET", "/api/users")).status, 403);
   assert.equal((await viewer("POST", "/api/ai/analyze", { schema_type: "food_registration", filename: "a.txt", text: "x" })).status, 403);
+});
+
+function fileForm(name, content) {
+  const form = new FormData();
+  form.append("file", new Blob([content]), name);
+  return form;
+}
+
+await step("attachments: upload, download, tenant isolation, delete", async () => {
+  const cfg = (await a("GET", "/api/config")).data;
+  assert.ok(cfg.attachments.extensions.includes("pdf") && cfg.attachments.max_bytes > 0);
+  const name = "申請書 (v2).txt";
+  const up = await a("POST", `/api/items/${items[0].id}/attachments`, fileForm(name, "附件內容 ABC"));
+  assert.equal(up.status, 201, JSON.stringify(up.data));
+  const att = up.data.items.find((i) => i.id === items[0].id).attachments;
+  assert.equal(att.length, 1);
+  assert.equal(att[0].filename, name);
+  const id = att[0].id;
+
+  const dl = await viewer("GET", `/api/attachments/${id}`);
+  assert.equal(dl.status, 200);
+  assert.equal(dl.text, "附件內容 ABC");
+  assert.match(dl.headers.get("content-disposition"), /^attachment; .*filename\*=UTF-8''%E7%94%B3/);
+  assert.match(dl.headers.get("content-security-policy"), /sandbox/);
+  assert.equal(dl.headers.get("x-content-type-options"), "nosniff");
+
+  assert.equal((await viewer("POST", `/api/items/${items[0].id}/attachments`, fileForm("x.pdf", "x"))).status, 403);
+  assert.equal((await viewer("DELETE", `/api/attachments/${id}`)).status, 403);
+  assert.equal((await b("GET", `/api/attachments/${id}`)).status, 404);
+  assert.equal((await b("DELETE", `/api/attachments/${id}`)).status, 404);
+  assert.equal((await b("POST", `/api/items/${items[0].id}/attachments`, fileForm("x.pdf", "x"))).status, 404);
+  assert.equal((await a("POST", `/api/items/${items[0].id}/attachments`, fileForm("page.html", "<script>1</script>"))).status, 400);
+  assert.equal((await a("POST", `/api/items/${items[0].id}/attachments`, fileForm("empty.pdf", ""))).status, 400);
+
+  const del = await a("DELETE", `/api/attachments/${id}`);
+  assert.equal(del.status, 200);
+  assert.equal(del.data.items.find((i) => i.id === items[0].id).attachments.length, 0);
+  assert.equal((await viewer("GET", `/api/attachments/${id}`)).status, 404);
+
+  // Deleting a custom item removes its files too.
+  const custom = (await a("POST", `/api/projects/${projectId}/items`, { item_name: `自訂附件項目 ${run}` })).data.items
+    .find((i) => i.item_name === `自訂附件項目 ${run}`);
+  const up2 = await a("POST", `/api/items/${custom.id}/attachments`, fileForm("memo.pdf", "%PDF-1.4"));
+  const id2 = up2.data.items.find((i) => i.id === custom.id).attachments[0].id;
+  assert.equal((await a("DELETE", `/api/items/${custom.id}`)).status, 200);
+  assert.equal((await a("GET", `/api/attachments/${id2}`)).status, 404);
 });
 
 await step("deactivating a user kills their session", async () => {

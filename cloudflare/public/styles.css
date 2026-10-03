@@ -348,6 +348,16 @@ tbody.collapsed .group-row th { border-bottom-color: var(--rule); }
 .criteria-list { font-size: var(--t-sm); color: var(--ink); max-height: 50vh; overflow-y: auto; }
 @media print { .criteria { display: block; } .criteria > summary { color: var(--ink); } }
 
+/* Files attached to a checklist item. */
+.attachments { margin-top: 6px; font-size: var(--t-xs); }
+.attachments ul { list-style: none; margin: 0 0 4px; padding: 0; display: grid; gap: 3px; }
+.attachments li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.attachments a { color: var(--link); overflow-wrap: anywhere; }
+.attachments a::before { content: "📎"; margin-right: 4px; }
+.attach-add { color: var(--link); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; width: fit-content; display: inline-block; }
+.attach-add:focus-within { outline: 2px solid var(--focus, var(--link)); outline-offset: 2px; }
+.link-btn.danger { color: var(--seal); }
+
 /* Status select carries its status colour like an ink mark on the form. */
 .status-select {
   appearance: none; -webkit-appearance: none;
