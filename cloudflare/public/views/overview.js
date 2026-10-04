@@ -241,6 +241,7 @@ function todoList(actionItems) {
   const rest = sorted.length - shown.length;
   return [
     h("ul", { class: "todo" }, shown.map((a) => h("li", { class: a.priority },
+      a.priority === "high" ? h("span", { class: "risk high" }, "高風險") : null,
       h("strong", {}, a.item), h("span", {}, a.action)))),
     rest > 0 ? h("p", { class: "todo-more" }, `另有 ${rest} 項，完整內容見文件檢查清單或匯出報告。`) : null,
   ];

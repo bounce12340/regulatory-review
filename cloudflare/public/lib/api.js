@@ -99,7 +99,6 @@ export const STATUS_COLOR = {
   completed: "#10b981", in_progress: "#f59e0b", under_review: "#3b82f6", blocked: "#ef4444", pending: "#94a3b8",
 };
 export const RISK_LABEL = { low: "低", medium: "中", high: "高" };
-export const RISK_COLOR = { low: "#10b981", medium: "#f59e0b", high: "#ef4444" };
 export const OVERALL_LABEL = {
   ready_for_submission: "可以送件",
   in_progress: "接近完成",
@@ -117,8 +116,14 @@ export function alertText(summary) {
 
 /** Status tag for the case lists: red only when the case needs action now. */
 export function overallTag(summary) {
-  const why = alertText(summary);
-  return { class: `tag ${summary.overall_status}${summary.alert ? " alert" : ""}`, title: why || null };
+  return { class: `tag ${summary.overall_status}${summary.alert ? " alert" : ""}` };
+}
+
+/** Text of that tag. A flagged case states its reason, so the red is not the only cue. */
+export function overallTagText(summary) {
+  const label = OVERALL_LABEL[summary.overall_status];
+  const why = summary.alert ? alertText(summary) : "";
+  return why ? `${label}：${why}` : label;
 }
 
 /** Application types grouped for <select> menus, in this order. */

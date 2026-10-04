@@ -117,7 +117,7 @@ export function confirmDialog(message, { okLabel = "確定", danger = false } = 
       h("div", { style: "margin-bottom:16px" }, message),
       h("div", { class: "btn-row", style: "justify-content:flex-end" },
         h("button", { class: "btn", onclick: () => dlg.close("cancel") }, "取消"),
-        h("button", { class: `btn ${danger ? "btn-danger" : "btn-primary"}`, onclick: () => dlg.close("ok") }, okLabel),
+        h("button", { class: `btn ${danger ? "btn-danger-solid" : "btn-primary"}`, onclick: () => dlg.close("ok") }, okLabel),
       ),
     );
     dlg.addEventListener("close", () => { resolve(dlg.returnValue === "ok"); dlg.remove(); });

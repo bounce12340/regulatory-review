@@ -60,6 +60,7 @@ export async function renderUsers(main, _params, ctx) {
     h("section", { class: "sheet" },
       h("h2", { class: "sheet-title" }, "新增成員"),
       h("form", {
+        class: "form-narrow",
         onsubmit: async (e) => {
           e.preventDefault();
           try {

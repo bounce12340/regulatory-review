@@ -41,7 +41,7 @@ export async function renderAi(main, _params, ctx) {
     file = f;
     fileLine.replaceChildren(h("b", {}, f.name), `（${Math.max(1, Math.round(f.size / 1024))} KB）`,
       // preventDefault keeps the click from also opening the file picker of the surrounding label.
-      h("button", { type: "button", class: "btn btn-sm btn-danger file-remove", "aria-label": `移除 ${f.name}`,
+      h("button", { type: "button", class: "link-btn file-remove", "aria-label": `移除 ${f.name}`,
         onclick: (e) => { e.preventDefault(); e.stopPropagation(); clearFile(); } }, "移除"));
     analyzeBtn.disabled = false;
   }
