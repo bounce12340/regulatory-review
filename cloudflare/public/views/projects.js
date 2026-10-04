@@ -1,6 +1,6 @@
 // Case management: ledger of cases, create from TFDA template, edit, close, archive, delete.
 import { h, mount, toast, formData, busy, confirmDialog, field } from "../lib/dom.js";
-import { api, state, canEdit, isAdmin, refreshProjects, overallTag, groupSchemas, PROJECT_STATUS_LABEL, OVERALL_LABEL } from "../lib/api.js";
+import { api, state, canEdit, isAdmin, refreshProjects, overallTag, overallTagText, groupSchemas, PROJECT_STATUS_LABEL } from "../lib/api.js";
 import { countStrip } from "../lib/charts.js";
 
 export async function renderProjects(main, _params, ctx) {
@@ -82,14 +82,14 @@ function row(p, reload) {
       h("div", { class: "item-sub" }, `${p.summary.completed} ／ ${p.summary.total - (p.summary.not_applicable ?? 0)} 份完成`)),
     h("td", { class: "nowrap l-due" }, p.deadline ?? "未設定"),
     h("td", { class: "l-status" }, p.status === "active"
-      ? h("span", overallTag(p.summary), OVERALL_LABEL[p.summary.overall_status])
+      ? h("span", overallTag(p.summary), overallTagText(p.summary))
       : h("span", { class: "tag" }, PROJECT_STATUS_LABEL[p.status])),
     h("td", { class: "l-act" }, editable ? h("div", { class: "btn-row" },
       h("button", { class: "btn btn-sm", onclick: () => editDialog(p, reload) }, "編輯"),
       p.status === "active"
-        ? [h("button", { class: "btn btn-sm", onclick: () => setStatus("completed", "已結案") }, "結案"),
-          h("button", { class: "btn btn-sm", onclick: () => setStatus("archived", "已封存") }, "封存")]
-        : h("button", { class: "btn btn-sm", onclick: () => setStatus("active", "已恢復") }, "恢復"),
+        ? [h("button", { class: "link-btn", type: "button", onclick: () => setStatus("completed", "已結案") }, "結案"),
+          h("button", { class: "link-btn", type: "button", onclick: () => setStatus("archived", "已封存") }, "封存")]
+        : h("button", { class: "link-btn", type: "button", onclick: () => setStatus("active", "已恢復") }, "恢復"),
     ) : null),
   );
 }
@@ -153,6 +153,7 @@ function createForm(reload, ctx) {
   return h("section", { class: "sheet", id: "create-case" },
     h("h2", { class: "sheet-title" }, "建立案件"),
     h("form", {
+      class: "form-narrow",
       onsubmit: async (e) => {
         e.preventDefault();
         try {
