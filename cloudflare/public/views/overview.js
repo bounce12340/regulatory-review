@@ -74,7 +74,9 @@ export async function renderOverview(main, params, ctx) {
 
   function onDetail(d) {
     detail = d;
-    refreshProjects().catch(() => {});
+    // Keep the cached case list's numbers current without another round trip.
+    const p = state.projects.find((x) => x.id === d.project.id);
+    if (p) p.summary = d.summary;
     draw();
   }
   function draw() {

@@ -1,6 +1,6 @@
 // RegReview front-end entry: session bootstrap, hash router, app shell, login/register.
 import { h, mount, toast, formData, busy, field } from "./lib/dom.js";
-import { api, state, isAdmin, refreshProjects, ROLE_LABEL } from "./lib/api.js";
+import { api, prefetch, state, isAdmin, refreshProjects, ROLE_LABEL } from "./lib/api.js";
 import { renderOverview } from "./views/overview.js";
 import { renderTimeline, renderCompare } from "./views/portfolio.js";
 import { renderProjects } from "./views/projects.js";
@@ -227,18 +227,18 @@ async function render() {
 }
 
 async function boot() {
-  try {
-    state.config = await api("GET", "/api/config");
-  } catch (err) {
-    mount(app, h("div", { class: "auth-wrap" }, h("div", { class: "notice error" }, `無法連線至伺服器：${err.message}`)));
+  // Settings and the session do not depend on each other, so ask for both at once.
+  const [config, me] = await Promise.allSettled([api("GET", "/api/config"), api("GET", "/api/auth/me")]);
+  if (config.status === "rejected") {
+    mount(app, h("div", { class: "auth-wrap" }, h("div", { class: "notice error" }, `無法連線至伺服器：${config.reason.message}`)));
     return;
   }
-  try {
-    state.user = (await api("GET", "/api/auth/me")).user;
-  } catch {
-    state.user = null;
-  }
+  state.config = config.value;
+  state.user = me.status === "fulfilled" ? me.value.user : null;
   if (state.user) {
+    // A link straight to a case starts loading that case while the case list loads.
+    const { route, params } = parseRoute();
+    if (route === "overview" && Number(params[0])) prefetch(`/api/projects/${Number(params[0])}`);
     await refreshProjects();
     if (!location.hash && state.currentProjectId) location.replace(`#/overview/${state.currentProjectId}`);
   }
