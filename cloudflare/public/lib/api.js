@@ -29,7 +29,24 @@ export function fileSize(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+const prefetched = new Map();
+
+/** Starts a GET early; the next api("GET", path) uses the result instead of asking again. */
+export function prefetch(path) {
+  const pending = api("GET", path);
+  pending.catch(() => {}); // a failed prefetch is retried by the real request
+  prefetched.set(path, { pending, at: Date.now() });
+}
+
 export async function api(method, path, body) {
+  if (method === "GET" && prefetched.has(path)) {
+    const { pending, at } = prefetched.get(path);
+    prefetched.delete(path);
+    // Only reuse it during start-up; anything older may be out of date.
+    if (Date.now() - at < 10_000) {
+      try { return await pending; } catch { /* fall through and ask again */ }
+    }
+  }
   const init = { method, headers: {}, credentials: "same-origin" };
   if (body !== undefined) {
     init.headers["Content-Type"] = "application/json";

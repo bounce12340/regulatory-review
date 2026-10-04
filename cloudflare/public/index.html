@@ -13,9 +13,18 @@
   <meta name="apple-mobile-web-app-title" content="RegReview">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="/styles.css">
+  <!-- Fetch the whole module graph at once instead of discovering it import by import. -->
+  <link rel="modulepreload" href="/app.js">
+  <link rel="modulepreload" href="/lib/dom.js">
+  <link rel="modulepreload" href="/lib/api.js">
+  <link rel="modulepreload" href="/lib/charts.js">
+  <link rel="modulepreload" href="/lib/docparse.js">
+  <link rel="modulepreload" href="/views/overview.js">
+  <link rel="modulepreload" href="/views/portfolio.js">
+  <link rel="modulepreload" href="/views/projects.js">
+  <link rel="modulepreload" href="/views/ai.js">
+  <link rel="modulepreload" href="/views/admin.js">
   <script src="/theme.js"></script>
 </head>
 <body>
