@@ -9,10 +9,11 @@ import {
   clearSessionCookie, hashIterations, hashPassword, MAX_PBKDF2_ITERATIONS, MIN_PBKDF2_ITERATIONS, hashToken, newSessionToken, normalizeEmail,
   readSessionCookie, sessionCookie, slugify, validatePassword, verifyPassword,
 } from "./auth";
-import { AnalysisError, analyzeDocument, MAX_TEXT_CHARS, type AiConfig } from "./ai";
+import { AnalysisError, analyzeDocument, MAX_TEXT_CHARS, reviewItem, type AiConfig } from "./ai";
 import { actionItems, rtfVerdict, summarize, todayTaipei, type ItemRow, type ProjectRow } from "./report";
 import {
-  ATTACHMENT_TYPES, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_ITEM, cleanFilename, contentDisposition, extensionOf,
+  ATTACHMENT_TYPES, DEFAULT_CASE_QUOTA_GB, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_ITEM, MAX_STORED_TEXT_CHARS,
+  SINGLE_UPLOAD_MAX_BYTES, TEXT_STATUSES, UPLOAD_PART_BYTES, cleanFilename, contentDisposition, extensionOf,
 } from "./attachments";
 import {
   findTemplateItem, isSchemaType, ITEM_STATUSES, RISK_LEVELS, riskFor, SCHEMAS,
@@ -24,6 +25,8 @@ export interface Env {
   ASSETS: Fetcher;
   /** R2 bucket holding files attached to checklist items. */
   FILES: R2Bucket;
+  /** Storage allowed per case, in GB (default 20). */
+  CASE_QUOTA_GB?: string;
   /** Secret: Ollama API key (https://ollama.com/settings/keys). AI analysis is off without it. */
   OLLAMA_API_KEY?: string;
   /** Ollama API base URL; defaults to Ollama's cloud (https://ollama.com). */
@@ -315,11 +318,47 @@ function decorateItems(schemaType: string, items: ItemRow[]) {
 
 interface AttachmentInfo {
   id: number; item_id: number; filename: string; size_bytes: number; created_at: string; uploaded_by_name: string | null;
+  text_status: string; text_chars: number;
+}
+
+/**
+ * Whole-case AI review covers Module 1, Module 3, DMF and PMF items. Module 4/5 and the
+ * new-drug-type items stay out of the default run (they can still be reviewed one by one).
+ */
+const AI_REVIEW_SKIP_CATEGORIES = new Set(["module4_nonclinical", "module5_clinical", "nda_type"]);
+
+/** Identifies the set of files (and their extracted text) an item was reviewed with. */
+function filesFingerprint(files: Pick<AttachmentInfo, "id" | "text_status" | "text_chars">[]): string {
+  const raw = files.map((f) => `${f.id}:${f.text_status}:${f.text_chars}`).sort().join("|");
+  let h = 0x811c9dc5; // FNV-1a, enough to tell "same files" from "changed files"
+  for (let i = 0; i < raw.length; i++) h = Math.imul(h ^ raw.charCodeAt(i), 0x01000193);
+  return `${files.length}-${(h >>> 0).toString(16)}`;
+}
+
+interface ReviewRow {
+  item_id: number; verdict: string; summary: string; findings: string; fixes: string;
+  fingerprint: string; model: string | null; reviewed_at: string;
+}
+
+async function projectReviews(env: Env, projectId: number): Promise<Map<number, ReviewRow>> {
+  const { results } = await env.DB.prepare(
+    "SELECT item_id, verdict, summary, findings, fixes, fingerprint, model, reviewed_at FROM item_review WHERE project_id = ?",
+  ).bind(projectId).all<ReviewRow>();
+  return new Map(results.map((r) => [r.item_id, r]));
+}
+
+function reviewJson(r: ReviewRow | undefined) {
+  if (!r) return null;
+  return {
+    verdict: r.verdict, summary: r.summary, findings: JSON.parse(r.findings), fixes: JSON.parse(r.fixes),
+    fingerprint: r.fingerprint, model: r.model, reviewed_at: r.reviewed_at,
+  };
 }
 
 async function projectAttachments(env: Env, projectId: number): Promise<Map<number, AttachmentInfo[]>> {
   const { results } = await env.DB.prepare(
-    `SELECT a.id, a.item_id, a.filename, a.size_bytes, a.created_at, u.full_name AS uploaded_by_name
+    `SELECT a.id, a.item_id, a.filename, a.size_bytes, a.created_at, u.full_name AS uploaded_by_name,
+            a.text_status, a.text_chars
        FROM attachment a LEFT JOIN user u ON u.id = a.uploaded_by
       WHERE a.project_id = ? ORDER BY a.created_at, a.id`,
   ).bind(projectId).all<AttachmentInfo>();
@@ -333,10 +372,24 @@ async function projectAttachments(env: Env, projectId: number): Promise<Map<numb
 }
 
 async function projectDetail(env: Env, project: ProjectRow) {
-  const [items, files] = await Promise.all([projectItems(env, project.id), projectAttachments(env, project.id)]);
+  const [items, files, reviews, used] = await Promise.all([
+    projectItems(env, project.id), projectAttachments(env, project.id), projectReviews(env, project.id),
+    caseUsageBytes(env, project.id),
+  ]);
   return {
-    project: { ...project, schema_name: SCHEMAS[project.schema_type]?.display_name_zh ?? project.schema_type },
-    items: decorateItems(project.schema_type, items).map((i) => ({ ...i, attachments: files.get(i.id) ?? [] })),
+    project: {
+      ...project, schema_name: SCHEMAS[project.schema_type]?.display_name_zh ?? project.schema_type,
+      storage: { used_bytes: used, quota_bytes: caseQuotaBytes(env) },
+    },
+    items: decorateItems(project.schema_type, items).map((i) => {
+      const attachments = files.get(i.id) ?? [];
+      return {
+        ...i, attachments,
+        files_fingerprint: filesFingerprint(attachments),
+        ai_scope: !AI_REVIEW_SKIP_CATEGORIES.has(i.category ?? ""),
+        review: reviewJson(reviews.get(i.id)),
+      };
+    }),
     summary: summarize(items, project.deadline, undefined, project.status === "active"),
     action_items: actionItems(project.schema_type, items),
     rtf: rtfVerdict(project.schema_type, items),
@@ -462,6 +515,8 @@ async function deleteProject(env: Env, user: AuthUser, id: number): Promise<Resp
   const keys = await attachmentKeys(env, "project_id", id);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM attachment WHERE project_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM item_review WHERE project_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM upload_session WHERE project_id = ?").bind(id),
     env.DB.prepare("DELETE FROM checklist_item WHERE project_id = ?").bind(id),
     env.DB.prepare("DELETE FROM project WHERE id = ? AND company_id = ?").bind(id, user.company_id),
   ]);
@@ -541,6 +596,8 @@ async function deleteItem(env: Env, user: AuthUser, itemId: number): Promise<Res
   const keys = await attachmentKeys(env, "item_id", item.id);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM attachment WHERE item_id = ?").bind(item.id),
+    env.DB.prepare("DELETE FROM item_review WHERE item_id = ?").bind(item.id),
+    env.DB.prepare("DELETE FROM upload_session WHERE item_id = ?").bind(item.id),
     env.DB.prepare("DELETE FROM checklist_item WHERE id = ?").bind(item.id),
   ]);
   await deleteObjects(env, keys);
@@ -551,8 +608,11 @@ async function deleteItem(env: Env, user: AuthUser, itemId: number): Promise<Res
 
 async function attachmentKeys(env: Env, column: "item_id" | "project_id", id: number): Promise<string[]> {
   const { results } = await env.DB.prepare(`SELECT r2_key FROM attachment WHERE ${column} = ?`).bind(id).all<{ r2_key: string }>();
-  return results.map((r) => r.r2_key);
+  // Each file may have its extracted text stored next to it.
+  return results.flatMap((r) => [r.r2_key, textKey(r.r2_key)]);
 }
+
+const textKey = (r2Key: string) => `${r2Key}.txt`;
 
 /** Removes stored files after their rows are gone; a failure only leaves an orphan object, so it is logged, not raised. */
 async function deleteObjects(env: Env, keys: string[]): Promise<void> {
@@ -573,12 +633,64 @@ async function attachmentRow(env: Env, user: AuthUser, id: number) {
   return row;
 }
 
+function caseQuotaBytes(env: Env): number {
+  const gb = Number(env.CASE_QUOTA_GB ?? DEFAULT_CASE_QUOTA_GB);
+  return (Number.isFinite(gb) && gb > 0 ? gb : DEFAULT_CASE_QUOTA_GB) * 1024 ** 3;
+}
+
+/** Bytes a case uses: stored files plus uploads still in progress (R2 drops those after 7 days). */
+async function caseUsageBytes(env: Env, projectId: number): Promise<number> {
+  const row = await env.DB.prepare(
+    `SELECT (SELECT COALESCE(SUM(size_bytes), 0) FROM attachment WHERE project_id = ?1)
+          + (SELECT COALESCE(SUM(size_bytes), 0) FROM upload_session
+              WHERE project_id = ?1 AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')) AS used`,
+  ).bind(projectId).first<{ used: number }>();
+  return row?.used ?? 0;
+}
+
+const UNSUPPORTED_TYPE = "不支援此檔案類型。可上傳 PDF、Word、Excel、PowerPoint、文字、CSV、XML、圖片（PNG／JPG／GIF／SVG）、ZIP 或 Outlook 郵件（.msg）。";
+
+/** Checks shared by single and multipart uploads. Returns the cleaned name and served type. */
+async function checkNewFile(env: Env, item: { id: number; project_id: number }, rawName: string, size: number) {
+  const filename = cleanFilename(rawName);
+  const contentType = ATTACHMENT_TYPES[extensionOf(filename)];
+  if (!filename || !contentType) throw new HttpError(400, UNSUPPORTED_TYPE);
+  if (!Number.isInteger(size) || size <= 0) throw new HttpError(400, "檔案是空的。");
+  if (size > MAX_ATTACHMENT_BYTES) throw new HttpError(413, "單一檔案不得超過 500 MB（TFDA eCTD 驗證規則 O.13）。");
+  const count = await env.DB.prepare(
+    "SELECT (SELECT COUNT(*) FROM attachment WHERE item_id = ?1) + (SELECT COUNT(*) FROM upload_session WHERE item_id = ?1) AS n",
+  ).bind(item.id).first<{ n: number }>();
+  if ((count?.n ?? 0) >= MAX_ATTACHMENTS_PER_ITEM) {
+    throw new HttpError(400, `每個項目最多 ${MAX_ATTACHMENTS_PER_ITEM} 個附件，請先刪除不需要的檔案。`);
+  }
+  const quota = caseQuotaBytes(env);
+  if ((await caseUsageBytes(env, item.project_id)) + size > quota) {
+    throw new HttpError(413, `此案件的儲存空間（${Math.round(quota / 1024 ** 3)} GB）不足，請先刪除不需要的檔案，或請管理員調高上限。`);
+  }
+  return { filename, contentType };
+}
+
+async function insertAttachment(
+  env: Env, user: AuthUser, item: { id: number; project_id: number },
+  key: string, filename: string, contentType: string, size: number,
+): Promise<number> {
+  const row = await env.DB.prepare(
+    `INSERT INTO attachment (company_id, project_id, item_id, r2_key, filename, content_type, size_bytes, uploaded_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+  ).bind(user.company_id, item.project_id, item.id, key, filename, contentType, size, user.id).first<{ id: number }>();
+  return row!.id;
+}
+
+// The key carries no part of the filename, so a name can never steer where it is stored.
+const newObjectKey = (user: AuthUser, item: { id: number; project_id: number }) =>
+  `${user.company_id}/${item.project_id}/${item.id}/${crypto.randomUUID()}`;
+
 async function uploadAttachment(request: Request, env: Env, user: AuthUser, itemId: number): Promise<Response> {
   requireRole(user, "admin", "member");
   const item = await itemWithProject(env, user, itemId);
   // Multipart overhead is small; reject clearly oversized requests before reading them.
-  if (Number(request.headers.get("Content-Length") ?? "0") > MAX_ATTACHMENT_BYTES + 64 * 1024) {
-    throw new HttpError(413, "檔案超過 25 MB 上限。");
+  if (Number(request.headers.get("Content-Length") ?? "0") > SINGLE_UPLOAD_MAX_BYTES + 64 * 1024) {
+    throw new HttpError(413, "超過 50 MB 的檔案請以分段方式上傳。");
   }
   let form: FormData;
   try {
@@ -588,31 +700,116 @@ async function uploadAttachment(request: Request, env: Env, user: AuthUser, item
   }
   const file = form.get("file");
   if (!file || typeof file === "string") throw new HttpError(400, "請選擇要上傳的檔案。");
-  const filename = cleanFilename(file.name);
-  const contentType = ATTACHMENT_TYPES[extensionOf(filename)];
-  if (!filename || !contentType) {
-    throw new HttpError(400, "不支援此檔案類型。可上傳 PDF、Word、Excel、PowerPoint、文字、CSV、圖片（PNG／JPG）、ZIP 或 Outlook 郵件（.msg）。");
-  }
-  if (file.size === 0) throw new HttpError(400, "檔案是空的。");
-  if (file.size > MAX_ATTACHMENT_BYTES) throw new HttpError(413, "檔案超過 25 MB 上限。");
-  const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM attachment WHERE item_id = ?").bind(item.id).first<{ n: number }>();
-  if ((count?.n ?? 0) >= MAX_ATTACHMENTS_PER_ITEM) {
-    throw new HttpError(400, `每個項目最多 ${MAX_ATTACHMENTS_PER_ITEM} 個附件，請先刪除不需要的檔案。`);
-  }
+  if (file.size > SINGLE_UPLOAD_MAX_BYTES) throw new HttpError(413, "超過 50 MB 的檔案請以分段方式上傳。");
+  const { filename, contentType } = await checkNewFile(env, item, file.name, file.size);
 
-  // The key carries no part of the filename, so a name can never steer where it is stored.
-  const key = `${user.company_id}/${item.project_id}/${item.id}/${crypto.randomUUID()}`;
+  const key = newObjectKey(user, item);
   await env.FILES.put(key, file, { httpMetadata: { contentType } });
+  let id: number;
   try {
-    await env.DB.prepare(
-      `INSERT INTO attachment (company_id, project_id, item_id, r2_key, filename, content_type, size_bytes, uploaded_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(user.company_id, item.project_id, item.id, key, filename, contentType, file.size, user.id).run();
+    id = await insertAttachment(env, user, item, key, filename, contentType, file.size);
   } catch (err) {
     await deleteObjects(env, [key]);
     throw err;
   }
-  return json(await projectDetail(env, await getProject(env, user, item.project_id)), 201);
+  return json({ attachment_id: id, ...(await projectDetail(env, await getProject(env, user, item.project_id))) }, 201);
+}
+
+// ── Multipart uploads for large files (parts of UPLOAD_PART_BYTES through the Worker) ─
+
+async function startUpload(request: Request, env: Env, user: AuthUser, itemId: number): Promise<Response> {
+  requireRole(user, "admin", "member");
+  const item = await itemWithProject(env, user, itemId);
+  const body = await readJson(request);
+  const size = Number(body.size);
+  const { filename, contentType } = await checkNewFile(env, item, String(body.filename ?? ""), size);
+  const key = newObjectKey(user, item);
+  const mpu = await env.FILES.createMultipartUpload(key, { httpMetadata: { contentType } });
+  await env.DB.prepare(
+    `INSERT INTO upload_session (id, company_id, project_id, item_id, r2_key, filename, content_type, size_bytes, part_size, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(mpu.uploadId, user.company_id, item.project_id, item.id, key, filename, contentType, size, UPLOAD_PART_BYTES, user.id).run();
+  return json({ upload_id: mpu.uploadId, part_size: UPLOAD_PART_BYTES, parts: Math.ceil(size / UPLOAD_PART_BYTES), filename }, 201);
+}
+
+async function uploadSession(env: Env, user: AuthUser, uploadId: string) {
+  const row = await env.DB.prepare(
+    "SELECT id, project_id, item_id, r2_key, filename, content_type, size_bytes, part_size FROM upload_session WHERE id = ? AND company_id = ?",
+  ).bind(uploadId, user.company_id).first<{
+    id: string; project_id: number; item_id: number; r2_key: string; filename: string;
+    content_type: string; size_bytes: number; part_size: number;
+  }>();
+  if (!row) throw new HttpError(404, "找不到此上傳作業，可能已完成、已取消或超過 7 天。");
+  return row;
+}
+
+async function uploadPart(request: Request, env: Env, user: AuthUser, uploadId: string, partNumber: number): Promise<Response> {
+  requireRole(user, "admin", "member");
+  const s = await uploadSession(env, user, uploadId);
+  const parts = Math.ceil(s.size_bytes / s.part_size);
+  if (partNumber < 1 || partNumber > parts) throw new HttpError(400, "分段編號不正確。");
+  // R2 requires every part except the last to be the same size.
+  const expected = partNumber < parts ? s.part_size : s.size_bytes - s.part_size * (parts - 1);
+  const length = Number(request.headers.get("Content-Length") ?? "-1");
+  if (length !== expected || !request.body) throw new HttpError(400, `第 ${partNumber} 段大小應為 ${expected} bytes。`);
+  const part = await env.FILES.resumeMultipartUpload(s.r2_key, s.id).uploadPart(partNumber, request.body);
+  return json({ part_number: part.partNumber, etag: part.etag });
+}
+
+async function completeUpload(request: Request, env: Env, user: AuthUser, uploadId: string): Promise<Response> {
+  requireRole(user, "admin", "member");
+  const s = await uploadSession(env, user, uploadId);
+  const body = await readJson(request);
+  const parts = Array.isArray(body.parts) ? body.parts : [];
+  const uploaded = parts.map((p: { part_number?: unknown; etag?: unknown }) => ({ partNumber: Number(p.part_number), etag: String(p.etag ?? "") }))
+    .sort((a: R2UploadedPart, b: R2UploadedPart) => a.partNumber - b.partNumber);
+  if (uploaded.length !== Math.ceil(s.size_bytes / s.part_size) || uploaded.some((p: R2UploadedPart, i: number) => p.partNumber !== i + 1 || !p.etag)) {
+    throw new HttpError(400, "分段資料不完整，請重新上傳缺少的分段。");
+  }
+  const object = await env.FILES.resumeMultipartUpload(s.r2_key, s.id).complete(uploaded);
+  if (object.size !== s.size_bytes) {
+    await deleteObjects(env, [s.r2_key]);
+    await env.DB.prepare("DELETE FROM upload_session WHERE id = ?").bind(s.id).run();
+    throw new HttpError(400, "上傳完成後的檔案大小與原檔不符，請重新上傳。");
+  }
+  const item = { id: s.item_id, project_id: s.project_id };
+  const [, inserted] = await env.DB.batch([
+    env.DB.prepare("DELETE FROM upload_session WHERE id = ?").bind(s.id),
+    env.DB.prepare(
+      `INSERT INTO attachment (company_id, project_id, item_id, r2_key, filename, content_type, size_bytes, uploaded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+    ).bind(user.company_id, item.project_id, item.id, s.r2_key, s.filename, s.content_type, s.size_bytes, user.id),
+  ]);
+  const id = (inserted.results[0] as { id: number }).id;
+  return json({ attachment_id: id, ...(await projectDetail(env, await getProject(env, user, s.project_id))) }, 201);
+}
+
+async function abortUpload(env: Env, user: AuthUser, uploadId: string): Promise<Response> {
+  requireRole(user, "admin", "member");
+  const s = await uploadSession(env, user, uploadId);
+  try {
+    await env.FILES.resumeMultipartUpload(s.r2_key, s.id).abort();
+  } catch (err) {
+    console.error("R2 abort failed", err); // R2 drops it after 7 days anyway
+  }
+  await env.DB.prepare("DELETE FROM upload_session WHERE id = ?").bind(s.id).run();
+  return json({ ok: true });
+}
+
+/** Stores the text the browser extracted from a file, for AI review. */
+async function putAttachmentText(request: Request, env: Env, user: AuthUser, id: number): Promise<Response> {
+  requireRole(user, "admin", "member");
+  const row = await attachmentRow(env, user, id);
+  const body = await readJson(request, 4 * MAX_STORED_TEXT_CHARS + 4096);
+  const status = oneOf(body.status, TEXT_STATUSES, "文字擷取狀態");
+  const text = typeof body.text === "string" ? body.text.slice(0, MAX_STORED_TEXT_CHARS) : "";
+  if (status === "ok" && !text.trim()) throw new HttpError(400, "沒有擷取到文字。");
+  if (status === "ok") {
+    await env.FILES.put(textKey(row.r2_key), text, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
+  }
+  await env.DB.prepare("UPDATE attachment SET text_status = ?, text_chars = ? WHERE id = ?")
+    .bind(status, status === "ok" ? text.length : 0, row.id).run();
+  return json({ ok: true, text_status: status, text_chars: status === "ok" ? text.length : 0 });
 }
 
 async function downloadAttachment(env: Env, user: AuthUser, id: number): Promise<Response> {
@@ -636,7 +833,7 @@ async function deleteAttachment(env: Env, user: AuthUser, id: number): Promise<R
   requireRole(user, "admin", "member");
   const row = await attachmentRow(env, user, id);
   await env.DB.prepare("DELETE FROM attachment WHERE id = ?").bind(row.id).run();
-  await deleteObjects(env, [row.r2_key]);
+  await deleteObjects(env, [row.r2_key, textKey(row.r2_key)]);
   return json(await projectDetail(env, await getProject(env, user, row.project_id)));
 }
 
@@ -695,6 +892,8 @@ async function deleteUser(env: Env, user: AuthUser, targetId: number): Promise<R
     env.DB.prepare("UPDATE checklist_item SET updated_by = NULL WHERE updated_by = ?").bind(target.id),
     env.DB.prepare("UPDATE project SET created_by = NULL WHERE created_by = ?").bind(target.id),
     env.DB.prepare("UPDATE attachment SET uploaded_by = NULL WHERE uploaded_by = ?").bind(target.id),
+    env.DB.prepare("UPDATE item_review SET reviewed_by = NULL WHERE reviewed_by = ?").bind(target.id),
+    env.DB.prepare("UPDATE upload_session SET created_by = NULL WHERE created_by = ?").bind(target.id),
     env.DB.prepare("DELETE FROM user WHERE id = ? AND company_id = ?").bind(target.id, user.company_id),
   ]);
   return listUsers(env, user);
@@ -733,6 +932,65 @@ async function analyze(request: Request, env: Env, user: AuthUser): Promise<Resp
   }
 }
 
+/**
+ * Reviews one checklist item: its files' stored text against the item's thresholds.
+ * Items without files are recorded as "missing" and items whose files have no text as
+ * "unreadable", without calling the model.
+ */
+async function reviewChecklistItem(env: Env, user: AuthUser, itemId: number): Promise<Response> {
+  requireRole(user, "admin", "member");
+  const item = await itemWithProject(env, user, itemId);
+  const project = await getProject(env, user, item.project_id);
+  const files = (await projectAttachments(env, project.id)).get(item.id) ?? [];
+  const fingerprint = filesFingerprint(files);
+  const tpl = findTemplateItem(project.schema_type, item.item_key);
+  const { results: keys } = await env.DB.prepare("SELECT id, r2_key FROM attachment WHERE item_id = ?").bind(item.id).all<{ id: number; r2_key: string }>();
+  const keyOf = new Map(keys.map((k) => [k.id, k.r2_key]));
+
+  let verdict: string, summary: string, findings: unknown[] = [], fixes: string[] = [], model: string | null = null;
+  let usage = { input_tokens: 0, output_tokens: 0 };
+  if (!files.length) {
+    verdict = "missing";
+    summary = "此項目尚未附加任何文件。";
+    fixes = ["上傳此項目所需的文件後再審查。"];
+  } else {
+    const withText = await Promise.all(files.map(async (f) => {
+      const obj = f.text_status === "ok" ? await env.FILES.get(textKey(keyOf.get(f.id)!)) : null;
+      return { filename: f.filename, text_status: f.text_status, text: obj ? await obj.text() : null };
+    }));
+    if (!withText.some((f) => f.text)) {
+      verdict = "unreadable";
+      summary = "此項目的文件都無法擷取文字（可能是掃描檔或不支援的格式），AI 無法審查內容。";
+      fixes = ["改上傳含文字層的 PDF（或先做 OCR），再重新審查。"];
+    } else {
+      const cfg = aiConfig(env);
+      if (!cfg) throw new HttpError(503, "AI 分析尚未啟用：管理員需設定 OLLAMA_API_KEY。");
+      try {
+        const r = await reviewItem(cfg, {
+          schema_name: SCHEMAS[project.schema_type]?.display_name_zh ?? project.schema_type,
+          label: item.item_name, required: Boolean(tpl?.required ?? true), criteria: tpl?.criteria ?? [],
+          action: tpl?.action_zh ?? null, notes: item.notes, files: withText,
+        });
+        ({ verdict, summary, findings, fixes, model } = r);
+        usage = r.token_usage;
+      } catch (err) {
+        if (err instanceof AnalysisError) throw new HttpError(err.status, err.message);
+        throw err;
+      }
+    }
+  }
+  await env.DB.prepare(
+    `INSERT INTO item_review (item_id, project_id, verdict, summary, findings, fixes, fingerprint, model, input_tokens, output_tokens, reviewed_by, reviewed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+     ON CONFLICT(item_id) DO UPDATE SET verdict = excluded.verdict, summary = excluded.summary, findings = excluded.findings,
+       fixes = excluded.fixes, fingerprint = excluded.fingerprint, model = excluded.model, input_tokens = excluded.input_tokens,
+       output_tokens = excluded.output_tokens, reviewed_by = excluded.reviewed_by, reviewed_at = excluded.reviewed_at`,
+  ).bind(item.id, project.id, verdict, summary, JSON.stringify(findings), JSON.stringify(fixes), fingerprint, model,
+    usage.input_tokens, usage.output_tokens, user.id).run();
+  const reviews = await projectReviews(env, project.id);
+  return json({ item_id: item.id, review: reviewJson(reviews.get(item.id)) });
+}
+
 // ── Router ───────────────────────────────────────────────────────────────────
 
 type Handler = (ctx: { request: Request; env: Env; url: URL; params: string[]; user: AuthUser }) => Promise<Response>;
@@ -752,6 +1010,12 @@ const routes: Array<[string, RegExp, Handler]> = [
   ["POST", /^\/api\/items\/(\d+)\/attachments$/, ({ request, env, user, params }) => uploadAttachment(request, env, user, idParam(params[0]))],
   ["GET", /^\/api\/attachments\/(\d+)$/, ({ env, user, params }) => downloadAttachment(env, user, idParam(params[0]))],
   ["DELETE", /^\/api\/attachments\/(\d+)$/, ({ env, user, params }) => deleteAttachment(env, user, idParam(params[0]))],
+  ["PUT", /^\/api\/attachments\/(\d+)\/text$/, ({ request, env, user, params }) => putAttachmentText(request, env, user, idParam(params[0]))],
+  ["POST", /^\/api\/items\/(\d+)\/uploads$/, ({ request, env, user, params }) => startUpload(request, env, user, idParam(params[0]))],
+  ["PUT", /^\/api\/uploads\/([\w.~=+%-]{1,1024})\/parts\/(\d{1,5})$/, ({ request, env, user, params }) => uploadPart(request, env, user, decodeURIComponent(params[0]), Number(params[1]))],
+  ["POST", /^\/api\/uploads\/([\w.~=+%-]{1,1024})\/complete$/, ({ request, env, user, params }) => completeUpload(request, env, user, decodeURIComponent(params[0]))],
+  ["DELETE", /^\/api\/uploads\/([\w.~=+%-]{1,1024})$/, ({ env, user, params }) => abortUpload(env, user, decodeURIComponent(params[0]))],
+  ["POST", /^\/api\/items\/(\d+)\/review$/, ({ env, user, params }) => reviewChecklistItem(env, user, idParam(params[0]))],
   ["GET", /^\/api\/users$/, ({ env, user }) => listUsers(env, user)],
   ["POST", /^\/api\/users$/, ({ request, env, user }) => createUser(request, env, user)],
   ["PATCH", /^\/api\/users\/(\d+)$/, ({ request, env, user, params }) => updateUser(request, env, user, idParam(params[0]))],
@@ -778,7 +1042,10 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       registration_enabled: (env.ALLOW_REGISTRATION ?? "true") === "true",
       ai_enabled: Boolean(cfg),
       ai_model: cfg?.model ?? null,
-      attachments: { max_bytes: MAX_ATTACHMENT_BYTES, extensions: Object.keys(ATTACHMENT_TYPES) },
+      attachments: {
+        max_bytes: MAX_ATTACHMENT_BYTES, single_max_bytes: SINGLE_UPLOAD_MAX_BYTES, part_bytes: UPLOAD_PART_BYTES,
+        per_item: MAX_ATTACHMENTS_PER_ITEM, case_quota_bytes: caseQuotaBytes(env), extensions: Object.keys(ATTACHMENT_TYPES),
+      },
       today: todayTaipei(),
     });
   }

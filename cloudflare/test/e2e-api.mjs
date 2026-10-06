@@ -9,9 +9,12 @@ import assert from "node:assert/strict";
 const BASE = process.env.BASE_URL ?? "http://127.0.0.1:8787";
 const run = Date.now().toString(36);
 
+const cookies = new WeakMap();
+async function cookieOf(c) { return cookies.get(c)(); }
+
 function client() {
   let cookie = "";
-  return async function call(method, path, body, headers = {}) {
+  const call = async function call(method, path, body, headers = {}) {
     // FormData bodies (file uploads) go as multipart; fetch sets the boundary header.
     const isForm = body instanceof FormData;
     const res = await fetch(BASE + path, {
@@ -26,6 +29,8 @@ function client() {
     try { data = JSON.parse(text); } catch { /* not JSON, e.g. a downloaded file */ }
     return { status: res.status, data, text, headers: res.headers };
   };
+  cookies.set(call, () => cookie);
+  return call;
 }
 
 let passed = 0;
@@ -290,6 +295,80 @@ await step("attachments: upload, download, tenant isolation, delete", async () =
   const id2 = up2.data.items.find((i) => i.id === custom.id).attachments[0].id;
   assert.equal((await a("DELETE", `/api/items/${custom.id}`)).status, 200);
   assert.equal((await a("GET", `/api/attachments/${id2}`)).status, 404);
+});
+
+await step("large files go up in parts; text and AI review per item; quota", async () => {
+  const cfg = (await a("GET", "/api/config")).data.attachments;
+  assert.equal(cfg.max_bytes, 500 * 1024 * 1024);
+  const part = cfg.part_bytes;
+  const itemId = items[2].id;
+
+  // Start a two-part upload (one full part + 1 MiB).
+  const size = part + 1024 * 1024;
+  assert.equal((await viewer("POST", `/api/items/${itemId}/uploads`, { filename: "big.pdf", size })).status, 403);
+  assert.equal((await a("POST", `/api/items/${itemId}/uploads`, { filename: "page.html", size })).status, 400);
+  assert.equal((await a("POST", `/api/items/${itemId}/uploads`, { filename: "huge.pdf", size: 501 * 1024 * 1024 })).status, 413);
+  const start = await a("POST", `/api/items/${itemId}/uploads`, { filename: "3.2.S.7 安定性 長期.pdf", size });
+  assert.equal(start.status, 201, JSON.stringify(start.data));
+  assert.equal(start.data.parts, 2);
+  const uid = encodeURIComponent(start.data.upload_id);
+  const bytes = new Uint8Array(size);
+  bytes.set(new TextEncoder().encode("%PDF-1.7 big test"), 0);
+  bytes[size - 1] = 0x42;
+  // A part of the wrong size is refused; another company cannot touch the upload.
+  const wrong = await fetch(`${BASE}/api/uploads/${uid}/parts/2`, { method: "PUT", body: bytes.subarray(0, 10), headers: { Cookie: await cookieOf(a) } });
+  assert.equal(wrong.status, 400);
+  assert.equal((await b("DELETE", `/api/uploads/${uid}`)).status, 404);
+  const etags = [];
+  for (const [n, from, to] of [[1, 0, part], [2, part, size]]) {
+    const r = await fetch(`${BASE}/api/uploads/${uid}/parts/${n}`, { method: "PUT", body: bytes.subarray(from, to), headers: { Cookie: await cookieOf(a) } });
+    const body = await r.text();
+    assert.equal(r.status, 200, body);
+    etags.push({ part_number: n, etag: JSON.parse(body).etag });
+  }
+  assert.equal((await a("POST", `/api/uploads/${uid}/complete`, { parts: etags.slice(0, 1) })).status, 400);
+  const done = await a("POST", `/api/uploads/${uid}/complete`, { parts: etags });
+  assert.equal(done.status, 201, JSON.stringify(done.data));
+  const bigId = done.data.attachment_id;
+  const it = done.data.items.find((i) => i.id === itemId);
+  assert.equal(it.attachments.find((x) => x.id === bigId).size_bytes, size);
+  assert.ok(done.data.project.storage.used_bytes >= size);
+  const dl = await fetch(`${BASE}/api/attachments/${bigId}`, { headers: { Cookie: await cookieOf(a) } });
+  assert.equal(Number(dl.headers.get("content-length")), size);
+  await dl.body.cancel();
+
+  // Over the case quota (CASE_QUOTA_GB in .dev.vars is set small for this test).
+  assert.equal((await a("POST", `/api/items/${itemId}/uploads`, { filename: "more.pdf", size: 40 * 1024 * 1024 })).status, 413);
+
+  // Extracted text, then an AI review that reads it.
+  assert.equal((await viewer("PUT", `/api/attachments/${bigId}/text`, { status: "ok", text: "x" })).status, 403);
+  assert.equal((await a("PUT", `/api/attachments/${bigId}/text`, { status: "bogus" })).status, 400);
+  const t = await a("PUT", `/api/attachments/${bigId}/text`, { status: "ok", text: "長期試驗 25°C/60% RH：0、3 個月。" });
+  assert.equal(t.status, 200);
+  assert.equal((await viewer("POST", `/api/items/${itemId}/review`)).status, 403);
+  const rv = await a("POST", `/api/items/${itemId}/review`);
+  assert.equal(rv.status, 200, JSON.stringify(rv.data));
+  if (process.env.MOCK_OLLAMA_URL) {
+    assert.equal(rv.data.review.verdict, "insufficient");
+    assert.equal(rv.data.review.findings[0].status, "not_met");
+    const sent = await (await fetch(`${process.env.MOCK_OLLAMA_URL}/__last`)).json();
+    const userMsg = sent.body.messages.find((m) => m.role === "user").content;
+    assert.ok(userMsg.includes("長期試驗 25°C/60% RH") && userMsg.includes("## 審查門檻"));
+  }
+  const detail = (await a("GET", `/api/projects/${projectId}`)).data.items.find((i) => i.id === itemId);
+  assert.equal(detail.review.fingerprint, detail.files_fingerprint);
+
+  // An item with no files is "missing"; files without text are "unreadable" (no model call).
+  const empty = await a("POST", `/api/items/${items[3].id}/review`);
+  assert.equal(empty.data.review.verdict, "missing");
+  const scanned = await a("POST", `/api/items/${items[3].id}/attachments`, fileForm("scan.pdf", "%PDF-1.4"));
+  await a("PUT", `/api/attachments/${scanned.data.attachment_id}/text`, { status: "scanned" });
+  assert.equal((await a("POST", `/api/items/${items[3].id}/review`)).data.review.verdict, "unreadable");
+
+  // Abort frees the reservation.
+  const s2 = await a("POST", `/api/items/${items[4].id}/uploads`, { filename: "x.pdf", size: 1024 });
+  assert.equal((await a("DELETE", `/api/uploads/${encodeURIComponent(s2.data.upload_id)}`)).status, 200);
+  assert.equal((await a("DELETE", `/api/attachments/${bigId}`)).status, 200);
 });
 
 await step("deactivating a user kills their session", async () => {

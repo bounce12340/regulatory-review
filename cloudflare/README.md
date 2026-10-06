@@ -22,7 +22,9 @@ TFDA 查驗登記文件審查與進度追蹤平台，部署在 **Cloudflare Work
 | 國外藥廠 PMF 審查 | 依 115.04.27 修訂之「國外藥廠工廠資料準備須知」建立 10 種 PMF 申請類型（非無菌／無菌／ATMPs・生物產品 × 全套／簡化，三種引用，擴建廠房）及國外藥廠 GMP 實地查核申請；各類型只列該申請方式應附之表A、表B、表C-1 項目與簡化／確效替代／引用文件（見 `docs/PMF_REVIEW_THRESHOLDS.md`） |
 | 專案管理 | 依申請類型（藥品展延 / 食品登記 / 醫材登記）自動帶入 TFDA 檢查項目，可建立、編輯、結案、封存、刪除 |
 | 專案總覽 | KPI、完成度、狀態與風險分布、可直接修改狀態與備註的檢查清單、待辦事項 |
-| 檢查項目附件 | 每個檢查項目可附加檔案（PDF、Office、文字、CSV、PNG/JPG、ZIP、.msg；單檔 25 MB、每項最多 20 個），存於 R2；成員以上可上傳與刪除，檢視者可下載；刪除項目或案件時一併刪除檔案 |
+| 檢查項目附件 | 每個檢查項目可附加檔案（PDF、Office、文字、CSV、XML、PNG/JPG/GIF/SVG、ZIP、.msg；單檔 500 MB、每項最多 50 個、每案預設 20 GB），存於 R2；超過 50 MB 的檔案分段上傳（每段 50 MB，失敗自動重試）；成員以上可上傳與刪除，檢視者可下載；刪除項目或案件時一併刪除檔案 |
+| 批次上傳 | 一次選取多個檔案或整個送件資料夾（含 eCTD 資料夾），系統依 CTD 節點（如 3.2.S.4.1、`32s41`）、表單代號（表B-3、CPP、SMF…）與檔名建議對應的檢查項目，確認後同時上傳；eCTD 結構檔（index.xml、DTD 等）自動略過 |
+| AI 全案審查 | 上傳時在瀏覽器把 PDF／Word／Excel 轉成文字存起來；AI 依每項的審查門檻逐條判定「符合／需修改／不足」，無檔案為「缺件」、掃描檔為「無法讀取」，並列出需補件／修正事項。只重審檔案有變更的項目；可依 AI 結果篩選清單。新藥案件範圍為 Module 1、Module 3 與全案一致性（不含 M4／M5） |
 | 風險自動判定 | 範本項目的風險依 `config/regulatory_schemas.yaml` 的 `risk_rules` 隨狀態自動計算；自訂項目可手動設定 |
 | 時程 / 多專案比較 | 截止日倒數、完成度與時程消耗對照、健康雷達圖 |
 | AI 文件分析 | 上傳含文字的 PDF、Word .docx、Excel .xlsx、純文字 → 瀏覽器轉成文字 → Ollama 雲端模型逐項比對檢查清單 → 缺口報告 |
@@ -85,6 +87,7 @@ Worker → **Settings → Domains & Routes → Add → Custom domain**，輸入�
 | `ALLOW_REGISTRATION` | `false` | 是否開放任何人註冊新公司（本機跑 `npm run test:e2e` 時需在 `.dev.vars` 設為 `true`） |
 | `SESSION_TTL_HOURS` | `168` | 登入有效時間（小時） |
 | `PBKDF2_ITERATIONS` | `100000` | 密碼雜湊強度（10,000–100,000），見上方方案說明 |
+| `CASE_QUOTA_GB` | `20`（未設定時） | 每個案件的附件空間上限（GB）。R2 超過免費 10 GB 後每 GB 每月約 US$0.015 |
 
 Secrets（`npx wrangler secret put <NAME>` 或 Dashboard 設定）：
 

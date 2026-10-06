@@ -18,7 +18,9 @@ describe("attachment filenames", () => {
   it("only accepts listed extensions, case-insensitively", () => {
     expect(ATTACHMENT_TYPES[extensionOf("Report.PDF")]).toBe("application/pdf");
     expect(ATTACHMENT_TYPES[extensionOf("page.html")]).toBeUndefined();
-    expect(ATTACHMENT_TYPES[extensionOf("image.svg")]).toBeUndefined();
+    expect(ATTACHMENT_TYPES[extensionOf("image.exe")]).toBeUndefined();
+    // eCTD Module 1 accepts SVG, GIF and XML (TFDA validation rule O.1).
+    expect(ATTACHMENT_TYPES[extensionOf("figure.svg")]).toBe("image/svg+xml");
     expect(extensionOf("noext")).toBe("");
   });
 
