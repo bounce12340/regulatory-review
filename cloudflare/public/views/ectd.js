@@ -1,10 +1,11 @@
 // eCTD: package a case's PDFs into an eCTD sequence, and check any eCTD ZIP or folder
 // against TFDA's validation rules before it goes to ExPress.
-import { h, mount, toast, download, busy, field } from "../lib/dom.js";
+import { h, mount, toast, download, busy, field, confirmDialog } from "../lib/dom.js";
 import { api, state, canEdit, fileSize } from "../lib/api.js";
 import { PLACEABLE, NODE } from "../lib/ectd-spec.js";
 import { itemNodes, nodesIn } from "../lib/ectd.js";
-import { RULES, zipEntries, folderEntries, validateEntries, loadBundledUtil, summarize } from "../lib/ectd-validate.js";
+import { RULES, zipEntries, folderEntries, validateEntries, loadBundledUtil, summarize, readManifests } from "../lib/ectd-validate.js";
+import { currentLeaves } from "../lib/ectd-lifecycle.js";
 import {
   planPaths, writePackage, envelopeProblems, newUuid, UNIT_TYPES, OBJECTIVES, TIERS,
 } from "../lib/ectd-build.js";
@@ -95,9 +96,25 @@ function buildPanel(detail) {
   const data = structuredClone({ ...defaults(detail), ...saved, envelope: { ...defaults(detail).envelope, ...saved.envelope }, product: { ...defaults(detail).product, ...saved.product } });
   const env = data.envelope;
   const product = data.product;
-  const docs = detail.items.flatMap((item) => (item.attachments ?? []).map((a) => ({
-    att: a, item, node: defaultNode(item, a), title: defaultTitle(a),
-  })));
+  let history = detail.ectd_sequences ?? [];
+  if (!detail.ectd && history.length) {
+    // A case whose earlier sequences were imported: carry on from them.
+    const last = history[history.length - 1];
+    if (last.uuid) env.identifier = last.uuid;
+    env.sequence = String(Number(last.sequence) + 1).padStart(4, "0");
+    env.unitType = "response";
+    env.relatedSequences = [last.sequence];
+  }
+  // Replace / delete choices belong to one sequence; a new sequence starts clean.
+  if (data.lifecycle?.sequence !== env.sequence) data.lifecycle = { sequence: env.sequence, replace: {}, deletes: [] };
+  const lc = data.lifecycle;
+  const earlier = () => history.filter((m) => m.sequence < env.sequence);
+  // Attachments packaged here before carry their ID: s0000-a12 is attachment 12 in sequence 0000.
+  const submittedIn = (attId) => earlier().find((m) => m.leaves.some((l) => new RegExp(`^s\\d{4}-a${attId}$`).test(l.id)))?.sequence ?? null;
+  const docs = detail.items.flatMap((item) => (item.attachments ?? []).map((a) => {
+    const sent = submittedIn(a.id);
+    return { att: a, item, sent, node: sent ? "" : defaultNode(item, a), title: defaultTitle(a), target: lc.replace[a.id] ?? "" };
+  }));
 
   const planBox = h("div", {});
   const problemsBox = h("div", {});
@@ -179,6 +196,97 @@ function buildPanel(detail) {
     } catch (err) { toast(err.message, "error"); }
   }
 
+  // ── Earlier sequences (lifecycle) ──
+  const historyBox = h("div", {});
+  const lifecycleSection = h("section", { class: "sheet" },
+    h("h2", { class: "sheet-title" }, "2. 先前序列（補件時替換或刪除）"),
+    h("p", { class: "help", style: "margin-top:-6px" },
+      "在這裡產生的序列會自動記錄；在別處製作或實際送出的版本不同時，請匯入實際送出的 ZIP，系統以匯入的內容為準。補件序列中，已送出的文件預設不再放入；改正後的文件可選擇「替換」原文件，不再需要的文件可勾選「刪除」。"),
+    historyBox);
+
+  async function importSequences(makeEntries) {
+    try {
+      const found = await readManifests(await makeEntries());
+      if (!found.length) { toast("找不到任何序列（需含 index.xml）。", "error"); return; }
+      for (const m of found) {
+        const res = await api("PUT", `/api/projects/${detail.project.id}/ectd/sequences/${m.sequence}`, { source: "imported", uuid: m.uuid, leaves: m.leaves });
+        history = res.ectd_sequences;
+      }
+      toast(`已匯入序列 ${found.map((m) => m.sequence).join("、")}`);
+      redrawLifecycle();
+    } catch (err) { toast(err.message, "error"); }
+  }
+
+  /** Files already sent in an earlier sequence are left out by default; others get their usual node. */
+  function syncSent() {
+    for (const d of docs) {
+      const sent = submittedIn(d.att.id);
+      if (sent !== d.sent) {
+        d.node = sent ? "" : defaultNode(d.item, d.att);
+        d.target = "";
+        if (d.nodeSelect) d.nodeSelect.value = d.node;
+      }
+      d.sent = sent;
+    }
+  }
+
+  function redrawLifecycle() {
+    detail.ectd_sequences = history;
+    syncSent();
+    drawHistory();
+    refresh();
+  }
+
+  function drawHistory() {
+    const live = [...currentLeaves(earlier())].map(([key, l]) => ({ key, ...l }));
+    const replaced = new Set(Object.values(lc.replace));
+    const zip = h("input", { type: "file", accept: ".zip,application/zip", class: "sr-only", onchange: (e) => {
+      const f = e.target.files[0]; e.target.value = ""; if (f) importSequences(() => zipEntries(f));
+    } });
+    const folder = h("input", { type: "file", multiple: true, webkitdirectory: true, class: "sr-only", onchange: (e) => {
+      const files = [...e.target.files].map((file) => ({ file, path: file.webkitRelativePath || file.name }));
+      e.target.value = ""; if (files.length) importSequences(async () => folderEntries(files));
+    } });
+    mount(historyBox,
+      history.length ? h("ul", { class: "seq-list" }, history.map((m) => h("li", {},
+        h("b", {}, m.sequence),
+        h("span", {}, `${m.source === "imported" ? "匯入" : "在此產生"}・${m.created_at.slice(0, 10)}・${m.leaves.length} 份文件`),
+        editable ? h("button", { type: "button", class: "link-btn danger", onclick: async () => {
+          if (!(await confirmDialog(`刪除序列 ${m.sequence} 的紀錄？只刪除這裡的紀錄，不影響已送出的資料。`, { okLabel: "刪除紀錄", danger: true }))) return;
+          try {
+            history = (await api("DELETE", `/api/projects/${detail.project.id}/ectd/sequences/${m.sequence}`)).ectd_sequences;
+            redrawLifecycle();
+          } catch (err) { toast(err.message, "error"); }
+        } }, "刪除紀錄") : null)))
+        : h("p", { class: "muted small" }, "還沒有先前序列的紀錄。首次送件（0000）不需要。"),
+      history.some((m) => m.sequence === env.sequence) ? h("p", { class: "small" },
+        `序列 ${env.sequence} 已有紀錄，再產生一次會覆蓋這筆紀錄。若要製作補件，請把上方「序列」改為 ${String(Number(history[history.length - 1].sequence) + 1).padStart(4, "0")}。`) : null,
+      editable ? h("div", { class: "btn-row" },
+        h("label", { class: "btn btn-sm" }, zip, "匯入已送出的序列 ZIP"),
+        h("label", { class: "btn btn-sm hover-only" }, folder, "匯入資料夾")) : null,
+      live.length ? h("details", { class: "disclose", open: env.sequence !== "0000" },
+        h("summary", {}, `序列 ${env.sequence} 之前仍有效的文件（${live.length}）`),
+        h("div", { class: "table-wrap" }, h("table", { class: "ectd-table live-table" },
+          h("thead", {}, h("tr", {}, ["節點", "標題", "來源序列", "刪除"].map((t) => h("th", {}, t)))),
+          h("tbody", {}, live.map((l) => {
+            const supported = l.node && NODE.get(l.node)?.files && !l.extension;
+            return h("tr", {},
+              h("td", { class: "nowrap" }, l.node ?? "—"),
+              h("td", { class: "e-file" }, h("div", {}, l.title), h("div", { class: "item-sub" }, l.path ?? "")),
+              h("td", { class: "nowrap" }, l.sequence),
+              h("td", {}, h("input", {
+                type: "checkbox", "aria-label": `刪除 ${l.title}`, checked: lc.deletes.includes(l.key),
+                disabled: !editable || !supported || replaced.has(l.key),
+                title: !supported ? "Module 4／5 或延伸節點的文件尚不支援" : replaced.has(l.key) ? "已選擇替換這份文件" : null,
+                onchange: (e) => {
+                  lc.deletes = e.target.checked ? [...lc.deletes, l.key] : lc.deletes.filter((k) => k !== l.key);
+                  refresh();
+                },
+              })));
+          }))))) : null,
+    );
+  }
+
   // ── Document placement ──
   const nodeOptions = (current) => [
     h("option", { value: "" }, "（不放入 eCTD）"),
@@ -195,12 +303,14 @@ function buildPanel(detail) {
   const docRows = docs.map((d) => {
     const pathCell = h("td", { class: "e-path" });
     d.pathCell = pathCell;
+    d.opCell = h("td", { class: "e-op" });
+    d.sentNote = h("div", { class: "item-sub" });
     return h("tr", {},
       h("td", { class: "e-file" }, h("div", { class: "item-name" }, d.att.filename),
-        h("div", { class: "item-sub" }, `${d.item.item_name}・${fileSize(d.att.size_bytes)}`)),
-      h("td", { class: "e-node" }, h("select", {
+        h("div", { class: "item-sub" }, `${d.item.item_name}・${fileSize(d.att.size_bytes)}`), d.sentNote),
+      h("td", { class: "e-node" }, d.nodeSelect = h("select", {
         class: "input", disabled: !editable, "aria-label": `${d.att.filename} 的 CTD 節點`,
-        onchange: (e) => { d.node = e.target.value; refresh(); persist(d, { ectd_node: d.node || "" }); },
+        onchange: (e) => { d.node = e.target.value; d.target = ""; delete lc.replace[d.att.id]; refresh(); persist(d, { ectd_node: d.node || "" }); },
       }, nodeOptions(d.node)),
       NOT_PACKAGED.has(d.item.category) ? h("div", { class: "item-sub" }, "Module 4／5 尚未支援打包")
         : !PACKABLE.has(extOf(d.att.filename)) ? h("div", { class: "item-sub" }, "eCTD 只收 PDF，請上傳轉好的 PDF 版") : null),
@@ -209,23 +319,24 @@ function buildPanel(detail) {
         oninput: (e) => { d.title = e.target.value; },
         onchange: (e) => { d.title = e.target.value.trim() || defaultTitle({ ...d.att, ectd_title: null }); e.target.value = d.title; persist(d, { ectd_title: d.title }); refresh(); },
       })),
+      d.opCell,
       pathCell,
     );
   });
 
   const placement = h("section", { class: "sheet" },
-    h("h2", { class: "sheet-title" }, "2. 文件配置", h("span", { class: "aside" }, `${docs.length} 個附件`)),
+    h("h2", { class: "sheet-title" }, "3. 文件配置", h("span", { class: "aside" }, `${docs.length} 個附件`)),
     h("p", { class: "help", style: "margin-top:-6px" },
       "每個附件放在一個 CTD 節點，標題會成為 eCTD 中的頁面標題（leaf title）。系統先依檢查項目與檔名建議，可逐一修改；檔名會依 TFDA 附件一及 ICH Appendix 4 自動命名。Word／Excel 請先轉成 PDF 再上傳到檢查項目。"),
     docs.length ? h("div", { class: "table-wrap" }, h("table", { class: "ectd-table" },
-      h("thead", {}, h("tr", {}, ["檔案", "CTD 節點", "標題（leaf title）", "eCTD 路徑"].map((t) => h("th", {}, t)))),
+      h("thead", {}, h("tr", {}, ["檔案", "CTD 節點", "標題（leaf title）", "操作", "eCTD 路徑"].map((t) => h("th", {}, t)))),
       h("tbody", {}, docRows)))
       : h("p", { class: "muted" }, "這個案件還沒有附件。請先在案件總覽上傳文件。"),
     planBox,
   );
 
   const output = h("section", { class: "sheet" },
-    h("h2", { class: "sheet-title" }, "3. 產生並驗證"),
+    h("h2", { class: "sheet-title" }, "4. 產生並驗證"),
     problemsBox,
     h("div", { class: "btn-row" }, buildBtn,
       h("span", { class: "help" }, "Chrome 或 Edge 會直接寫入你選的位置，6 GB 以上也可以；其他瀏覽器會先放在記憶體再下載。")),
@@ -233,20 +344,75 @@ function buildPanel(detail) {
     resultBox,
   );
 
+  function liveMap() {
+    return currentLeaves(earlier());
+  }
+
   function current() {
+    const live = liveMap();
     const chosen = docs.filter((d) => d.node);
-    return planPaths(chosen.map((d) => ({ key: String(d.att.id), node: d.node, title: d.title, filename: d.att.filename, size: d.att.size_bytes, att: d.att })),
+    const targetOf = (d) => {
+      const l = d.target && live.get(d.target);
+      return l ? { sequence: l.sequence, xml: l.xml, id: l.id } : undefined;
+    };
+    const plan = planPaths(chosen.map((d) => ({ key: String(d.att.id), node: d.node, title: d.title, filename: d.att.filename, size: d.att.size_bytes, att: d.att, target: targetOf(d) })),
       product, name.appNo || "0000000000", env.sequence || "0000");
+    const deletes = lc.deletes.map((k) => live.get(k)).filter(Boolean)
+      .map((l) => ({ key: `${l.sequence}-${l.id}`, node: l.node, title: l.title, target: { sequence: l.sequence, xml: l.xml, id: l.id } }));
+    return { ...plan, deletes };
+  }
+
+  /** Sequence-order and UUID checks against the recorded history (rules M.2, M.4, I.8). */
+  function historyProblems() {
+    if (!history.length || !/^\d{4}$/.test(env.sequence)) return [];
+    const out = [];
+    const prev = earlier();
+    const last = prev[prev.length - 1];
+    const expected = last ? String(Number(last.sequence) + 1).padStart(4, "0") : "0000";
+    if (env.sequence > expected) out.push(`序列應為 ${expected}（前一序列 ${last?.sequence ?? "無"}），不可跳號（規則 M.4）。`);
+    if (last?.uuid && env.identifier !== last.uuid) out.push(`UUID 須與序列 ${last.sequence} 相同：${last.uuid}（規則 I.8）。`);
+    return out;
   }
 
   function refresh() {
-    const { placed, problems } = current();
+    if (lc.sequence !== env.sequence) {
+      // Choices were for another sequence number.
+      Object.assign(lc, { sequence: env.sequence, replace: {}, deletes: [] });
+      for (const d of docs) d.target = "";
+      syncSent();
+      drawHistory();
+    }
+    const { placed, problems, deletes } = current();
+    const live = liveMap();
     const byKey = new Map(placed.map((p) => [p.key, p]));
-    for (const d of docs) d.pathCell.replaceChildren(byKey.get(String(d.att.id))?.path ?? h("span", { class: "muted" }, d.node ? "—" : "不放入"));
+    const taken = new Set(docs.filter((d) => d.node && d.target).map((d) => d.target));
+    for (const d of docs) {
+      const p = byKey.get(String(d.att.id));
+      d.pathCell.replaceChildren(p?.path ?? h("span", { class: "muted" }, d.node ? "—" : "不放入"));
+      d.sentNote.textContent = d.sent ? `已於序列 ${d.sent} 送出` : "";
+      // Documents in the same section of earlier sequences can be replaced by this one.
+      const options = d.node ? [...live].filter(([k, l]) => l.node === d.node && !l.extension && !lc.deletes.includes(k) && (k === d.target || !taken.has(k))) : [];
+      if (d.target && !options.some(([k]) => k === d.target)) { d.target = ""; delete lc.replace[d.att.id]; }
+      d.opCell.replaceChildren(!d.node ? h("span", { class: "muted small" }, "—") : !options.length
+        ? h("span", { class: "small" }, "新增")
+        : h("select", {
+          class: "input", disabled: !editable, "aria-label": `${d.att.filename} 的操作`,
+          onchange: (e) => {
+            d.target = e.target.value;
+            if (d.target) lc.replace[d.att.id] = d.target; else delete lc.replace[d.att.id];
+            refresh();
+            drawHistory();
+          },
+        }, h("option", { value: "" }, "新增"),
+        options.map(([k, l]) => h("option", { value: k, selected: k === d.target }, `替換：${l.title}（序列 ${l.sequence}）`))));
+    }
     const envProblems = envelopeProblems(env);
     const missingForm = !placed.some((p) => p.node === "1.1.1");
-    const all = [...envProblems, ...(missingForm ? ["1.1.1（申請書／公文／回覆函）必須至少放一個檔案（規則 O.11）。"] : []), ...problems.map((p) => p.message)];
-    planBox.replaceChildren(h("p", { class: "small", style: "margin-top:10px" }, `放入 eCTD：${placed.length} 個檔案，${fileSize(placed.reduce((n, p) => n + p.size, 0))}`));
+    const all = [...envProblems, ...historyProblems(), ...(missingForm ? ["1.1.1（申請書／公文／回覆函）必須至少放一個檔案（規則 O.11）。"] : []), ...problems.map((p) => p.message)];
+    const replacing = placed.filter((p) => p.target).length;
+    planBox.replaceChildren(h("p", { class: "small", style: "margin-top:10px" },
+      `放入 eCTD：${placed.length} 個檔案，${fileSize(placed.reduce((n, p) => n + p.size, 0))}` +
+      (replacing ? `；其中 ${replacing} 個替換先前文件` : "") + (deletes.length ? `；刪除先前文件 ${deletes.length} 個` : "")));
     problemsBox.replaceChildren(all.length
       ? h("div", { class: "notice warn" }, h("b", {}, "產生前需修正："), h("ul", {}, all.map((x) => h("li", {}, x))))
       : h("p", { class: "small" }, "送件資訊與文件配置都已就緒。"));
@@ -255,7 +421,7 @@ function buildPanel(detail) {
 
   let running = false;
   async function build(btn) {
-    const { placed } = current();
+    const { placed, deletes } = current();
     const fileName = `${name.appNo}-${env.sequence}.zip`;
     let out;
     try {
@@ -276,8 +442,8 @@ function buildPanel(detail) {
     progress.replaceChildren(bar, label);
     resultBox.replaceChildren();
     try {
-      await writePackage({
-        env, product, placed, sink: out.sink,
+      const { manifest } = await writePackage({
+        env, product, placed, deletes, sink: out.sink,
         fetchDoc: async (d) => {
           const res = await fetch(`/api/attachments/${d.att.id}`, { credentials: "same-origin" });
           if (!res.ok) throw new Error(`無法下載「${d.att.filename}」（${res.status}）。`);
@@ -288,9 +454,14 @@ function buildPanel(detail) {
       });
       const file = await out.close();
       if (out.memory) download(fileName, file);
+      // Remember what this sequence holds so the next one can replace or delete it.
+      try {
+        history = (await api("PUT", `/api/projects/${detail.project.id}/ectd/sequences/${env.sequence}`, { source: "built", ...manifest })).ectd_sequences;
+        redrawLifecycle();
+      } catch (err) { toast(`序列紀錄未儲存：${err.message}`, "error"); }
       label.textContent = "已產生，正在驗證…";
       bar.value = 0;
-      const report = await runValidation(await zipEntries(file), (d, t) => { bar.value = t ? d / t : 1; });
+      const report = await runValidation(await zipEntries(file), (d, t) => { bar.value = t ? d / t : 1; }, earlier());
       progress.hidden = true;
       resultBox.replaceChildren(h("p", { class: "small" }, `已產生 ${fileName}（${fileSize(file.size)}）${out.memory ? "，已下載" : "，已存到你選的位置"}。以下是自動驗證結果：`), reportView(report));
       toast(`已產生 ${fileName}`);
@@ -304,8 +475,8 @@ function buildPanel(detail) {
     }
   }
 
-  const page = [envelopeForm, placement, output];
-  queueMicrotask(refresh);
+  const page = [envelopeForm, lifecycleSection, placement, output];
+  queueMicrotask(() => { drawHistory(); refresh(); });
   return page;
 }
 
@@ -330,9 +501,9 @@ async function openSink(suggestedName) {
 
 // ── Validate ────────────────────────────────────────────────────────────────
 
-async function runValidation(entries, onProgress) {
+async function runValidation(entries, onProgress, history = []) {
   await loadBundledUtil(async (n) => (await fetch(new URL(n, UTIL_URL))).text());
-  return validateEntries(entries, { onProgress: (d, t) => onProgress(d, t) });
+  return validateEntries(entries, { onProgress: (d, t) => onProgress(d, t), history });
 }
 
 function validatePanel() {

@@ -2,11 +2,14 @@
 // names (TW 附件一 / ICH Appendix 4), tw-regional.xml with the envelope, index.xml, the MD5
 // file and the util files, written into a ZIP64 archive as one stream.
 //
-// Every document goes in with operation "new". Replacing or deleting documents of an earlier
-// sequence (lifecycle) needs that sequence's index.xml and is not supported here yet.
+// Documents go in as "new", or as "replace" with a modified-file pointing at a document of an
+// earlier sequence; documents can also be deleted. Leaf IDs are derived from the sequence and
+// the attachment, so building the same sequence again gives the same IDs (later sequences may
+// already point at them).
 
 import { NODE, TW_M1, ICH_NODES, UTIL_FILES, TW_REGIONAL_PATH, MAX_NAME, MAX_PATH, parentNode, slug } from "./ectd-spec.js";
-import { esc } from "./xml.js";
+import { esc, parseXml } from "./xml.js";
+import { extractLeaves, modifiedFileFor } from "./ectd-lifecycle.js";
 import { Md5, md5 } from "./md5.js";
 import { Crc32, ZipWriter } from "./zip.js";
 
@@ -19,7 +22,9 @@ import { Crc32, ZipWriter } from "./zip.js";
  *   inns: string[], sequence: string, relatedSequences: string[], description: string,
  * }} Envelope
  * @typedef {{substance?: string, manufacturer?: string, product?: string, dosageForm?: string, productManufacturer?: string, indication?: string}} Product
- * @typedef {{key: string, node: string, title: string, filename: string, size: number}} Doc
+ * @typedef {{key: string, node: string, title: string, filename: string, size: number,
+ *   target?: {sequence: string, xml: "index"|"tw", id: string}}} Doc  target: the earlier leaf it replaces
+ * @typedef {{key: string, node: string, title: string, target: {sequence: string, xml: "index"|"tw", id: string}}} Deletion
  */
 
 export const UNIT_TYPES = { initial: "首次送件", "validation-response": "驗證回復", response: "回復", "additional-info": "附加訊息", corrigendum: "更正", reformat: "格式轉換" };
@@ -115,19 +120,34 @@ function ichFolder(node, sFolder, pFolder) {
   return chain.filter((s) => s?.dir).map((s) => s.dir.replace("@s", sFolder).replace("@p", pFolder)).join("/");
 }
 
-let idCounter = 0;
-function leafId() {
-  // IDs must be unique across sequences of one application; time + counter + random.
-  return `id${Date.now().toString(36)}${(idCounter++).toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+/** Leaf ID: unique within the application because it carries the sequence number. */
+export function leafIdFor(sequence, key) {
+  return `s${sequence}-${String(key).replace(/[^A-Za-z0-9_.-]/g, "_")}`;
 }
 
-function leafXml(indent, { href, md5: sum, title }) {
-  return `${indent}<leaf ID="${leafId()}" operation="new" checksum-type="md5" checksum="${sum}" xlink:type="simple" xlink:href="${esc(href)}">\n` +
+const xmlOf = (node) => (node.startsWith("1.") ? "tw" : "index");
+
+function leafXml(indent, { id, href, md5: sum, title, op = "new", modifiedFile = null }) {
+  const mod = modifiedFile ? ` modified-file="${esc(modifiedFile)}"` : "";
+  // A deleted document has no file: no href and an empty checksum (ICH eCTD V3.2.2).
+  const link = op === "delete" ? "" : ` xlink:href="${esc(href)}"`;
+  return `${indent}<leaf ID="${id}" operation="${op}"${mod} checksum-type="md5" checksum="${op === "delete" ? "" : sum}" xlink:type="simple"${link}>\n` +
     `${indent}  <title>${esc(title)}</title>\n${indent}</leaf>\n`;
+}
+
+/** Leaf attributes for a placed document or a deletion in this sequence. */
+function leafOf(d, sequence, hrefOf) {
+  const op = d.op ?? (d.target ? "replace" : "new");
+  return {
+    id: leafIdFor(sequence, d.op === "delete" ? `d${d.key}` : `a${d.key}`),
+    href: d.path ? hrefOf(d) : null, md5: d.md5 ?? "", title: d.title, op,
+    modifiedFile: d.target ? modifiedFileFor(xmlOf(d.node), d.target) : null,
+  };
 }
 
 /** tw-regional.xml for the envelope and the Module 1 documents (paths relative to m1/tw). */
 export function twRegionalXml(env, m1Docs) {
+  const seq = env.sequence;
   const t = (s) => esc(String(s ?? "").trim());
   const typeAttrs = ["tier1", "tier2", "tier3", "tier4", "tier5"].filter((k) => env[k]).map((k) => ` ${k}="${t(env[k])}"`).join("");
   let x = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE tw:tw-backbone SYSTEM "../../util/dtd/tw-regional.dtd">\n` +
@@ -151,7 +171,7 @@ export function twRegionalXml(env, m1Docs) {
     env.relatedSequences.filter((s) => s.trim()).map((s) => `      <related-sequence>${t(s)}</related-sequence>\n`).join("") +
     `      <submission-description>${t(env.description)}</submission-description>\n` +
     `    </envelope>\n  </tw-envelope>\n`;
-  x += sectionXml(TW_M1, "m1-tw", m1Docs, "  ", (d) => d.path.slice("m1/tw/".length));
+  x += sectionXml(TW_M1, "m1-tw", m1Docs, "  ", (d) => leafOf(d, seq, (doc) => doc.path.slice("m1/tw/".length)));
   return `${x}</tw:tw-backbone>\n`;
 }
 
@@ -159,13 +179,13 @@ export function twRegionalXml(env, m1Docs) {
  * Writes the headings that have documents, nested and in DTD order.
  * @param {object[]} specs  section table (DTD order)
  */
-function sectionXml(specs, rootElement, docs, indent, hrefOf, attrsOf = () => "") {
+function sectionXml(specs, rootElement, docs, indent, leafFor, attrsOf = () => "") {
   const has = new Set();
   for (const d of docs) for (let n = d.node; n; n = parentNode(n)) has.add(n);
   const children = (parent) => specs.filter((s) => has.has(s.node) && parentNode(s.node) === parent);
   const render = (spec, pad) => {
     let out = `${pad}<${spec.element}${attrsOf(spec)}>\n`;
-    for (const d of docs.filter((x) => x.node === spec.node)) out += leafXml(`${pad}  `, { href: hrefOf(d), md5: d.md5, title: d.title });
+    for (const d of docs.filter((x) => x.node === spec.node)) out += leafXml(`${pad}  `, leafFor(d));
     for (const c of children(spec.node)) out += render(c, `${pad}  `);
     return `${out}${pad}</${spec.element}>\n`;
   };
@@ -177,7 +197,7 @@ function sectionXml(specs, rootElement, docs, indent, hrefOf, attrsOf = () => ""
 }
 
 /** index.xml: a leaf for tw-regional.xml in m1, then Modules 2 and 3. */
-export function indexXml(twRegionalMd5, ichDocs, product) {
+export function indexXml(twRegionalMd5, ichDocs, product, sequence = "0000") {
   const a = (k, v) => (v && String(v).trim() ? ` ${k}="${esc(String(v).trim())}"` : "");
   const attrsOf = (spec) => {
     if (spec.node === "3.2.s" || spec.node === "2.3.s") return a("substance", product.substance || "substance-1") + a("manufacturer", product.manufacturer || "manufacturer-1");
@@ -189,9 +209,9 @@ export function indexXml(twRegionalMd5, ichDocs, product) {
     `<?xml-stylesheet type="text/xsl" href="util/style/ectd-2-0.xsl"?>\n` +
     `<ectd:ectd xmlns:ectd="http://www.ich.org/ectd" xmlns:xlink="http://www.w3c.org/1999/xlink" dtd-version="3.2">\n` +
     `  <m1-administrative-information-and-prescribing-information>\n` +
-    leafXml("    ", { href: TW_REGIONAL_PATH, md5: twRegionalMd5, title: "TW Regional" }) +
+    leafXml("    ", { id: leafIdFor(sequence, "tw-regional"), href: TW_REGIONAL_PATH, md5: twRegionalMd5, title: "TW Regional" }) +
     `  </m1-administrative-information-and-prescribing-information>\n` +
-    sectionXml(ICH_NODES, null, ichDocs, "  ", (d) => d.path, attrsOf) +
+    sectionXml(ICH_NODES, null, ichDocs, "  ", (d) => leafOf(d, sequence, (doc) => doc.path), attrsOf) +
     `</ectd:ectd>\n`;
 }
 
@@ -212,11 +232,11 @@ export async function hashBlob(blob, onBytes) {
 /**
  * Writes the whole sequence as a ZIP: {appNo}/{sequence}/...
  * @param {{env: Envelope, product: Product, placed: (Doc & {path: string})[],
- *   fetchDoc: (doc) => Promise<Blob>, fetchUtil: (name: string) => Promise<Blob>,
+ *   deletes?: Deletion[], fetchDoc: (doc) => Promise<Blob>, fetchUtil: (name: string) => Promise<Blob>,
  *   sink: {write: (chunk: Uint8Array|Blob) => Promise<void>},
  *   onProgress?: (done: number, total: number, label: string) => void, signal?: AbortSignal}} o
  */
-export async function writePackage({ env, product, placed, fetchDoc, fetchUtil, sink, onProgress, signal }) {
+export async function writePackage({ env, product, placed, deletes = [], fetchDoc, fetchUtil, sink, onProgress, signal }) {
   const appNo = env.inventedNames[0].appNo;
   const root = `${appNo}/${env.sequence}/`;
   const zip = new ZipWriter(sink);
@@ -237,16 +257,22 @@ export async function writePackage({ env, product, placed, fetchDoc, fetchUtil, 
     if (md5(bytes) !== u.md5) throw new Error(`內建的 ${u.path} checksum 不符，請重新整理頁面後再試。`);
     await zip.add(root + u.path, bytes, new Crc32().update(bytes).value());
   }
-  const m1 = hashed.filter((d) => d.path.startsWith("m1/"));
-  const ich = hashed.filter((d) => !d.path.startsWith("m1/"));
+  const removed = deletes.map((d) => ({ ...d, op: "delete", path: null, md5: "" }));
+  const all = [...hashed, ...removed];
+  const m1 = all.filter((d) => xmlOf(d.node) === "tw");
+  const ich = all.filter((d) => xmlOf(d.node) === "index");
   const enc = new TextEncoder();
-  const tw = enc.encode(twRegionalXml(env, m1));
+  const twText = twRegionalXml(env, m1);
+  const tw = enc.encode(twText);
   await zip.add(root + TW_REGIONAL_PATH, tw, new Crc32().update(tw).value());
-  const index = enc.encode(indexXml(md5(tw), ich, product));
+  const indexText = indexXml(md5(tw), ich, product, env.sequence);
+  const index = enc.encode(indexText);
   await zip.add(`${root}index.xml`, index, new Crc32().update(index).value());
   const sum = enc.encode(md5(index));
   await zip.add(`${root}index-md5.txt`, sum, new Crc32().update(sum).value());
   await zip.finish();
   onProgress?.(total, total, "完成");
-  return { files: hashed.length + UTIL_FILES.length + 3 };
+  // What this sequence contains, for replacing or deleting its documents later.
+  const manifest = { sequence: env.sequence, uuid: env.identifier, leaves: extractLeaves(parseXml(indexText), parseXml(twText)) };
+  return { files: hashed.length + UTIL_FILES.length + 3, manifest };
 }

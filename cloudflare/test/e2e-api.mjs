@@ -297,7 +297,7 @@ await step("attachments: upload, download, tenant isolation, delete", async () =
   assert.equal((await a("GET", `/api/attachments/${id2}`)).status, 404);
 });
 
-await step("eCTD: node and title per attachment, envelope per case", async () => {
+await step("eCTD: node and title per attachment, envelope and sequence history per case", async () => {
   const up = await a("POST", `/api/items/${items[0].id}/attachments`, fileForm("form.pdf", "%PDF-1.7 x %%EOF"));
   const id = up.data.attachment_id;
   const p1 = await a("PATCH", `/api/attachments/${id}`, { ectd_node: "1.1.1", ectd_title: "藥品查驗登記申請書" });
@@ -321,6 +321,27 @@ await step("eCTD: node and title per attachment, envelope per case", async () =>
   assert.equal((await viewer("PUT", `/api/projects/${projectId}/ectd`, { ectd })).status, 403);
   assert.equal((await b("PUT", `/api/projects/${projectId}/ectd`, { ectd })).status, 404);
   await a("DELETE", `/api/attachments/${id}`);
+
+  // Sequence history for replace/delete in later sequences.
+  const leaf = { id: "s0000-a1", xml: "tw", op: "new", node: "1.1.1", section: "tw:tw-backbone/m1-tw/m1-1-offdoc/m1-1-1-form", title: "申請書", path: "m1/tw/11-offdoc/111-form/form-a.pdf", md5: "0".repeat(32), modifiedFile: null, extra: "dropped" };
+  const s0 = await a("PUT", `/api/projects/${projectId}/ectd/sequences/0000`, { source: "built", uuid: ectd.envelope.identifier, leaves: [leaf] });
+  assert.equal(s0.status, 200, JSON.stringify(s0.data));
+  assert.equal(s0.data.ectd_sequences.length, 1);
+  assert.equal(s0.data.ectd_sequences[0].leaves[0].extra, undefined);
+  assert.equal(s0.data.ectd_sequences[0].created_by_name !== undefined, true);
+  const seen = (await viewer("GET", `/api/projects/${projectId}`)).data.ectd_sequences;
+  assert.deepEqual(seen.map((x) => [x.sequence, x.source, x.leaves[0].id]), [["0000", "built", "s0000-a1"]]);
+  // Importing the same sequence replaces the record.
+  const s0b = await a("PUT", `/api/projects/${projectId}/ectd/sequences/0000`, { source: "imported", uuid: null, leaves: [leaf, { ...leaf, id: "x2" }] });
+  assert.deepEqual(s0b.data.ectd_sequences.map((x) => [x.sequence, x.source, x.leaves.length]), [["0000", "imported", 2]]);
+  assert.equal((await a("PUT", `/api/projects/${projectId}/ectd/sequences/0001`, { source: "built", leaves: [{ ...leaf, op: "rename" }] })).status, 400);
+  assert.equal((await a("PUT", `/api/projects/${projectId}/ectd/sequences/0001`, { source: "other", leaves: [] })).status, 400);
+  assert.equal((await a("PUT", `/api/projects/${projectId}/ectd/sequences/1`, { source: "built", leaves: [] })).status, 404);
+  assert.equal((await viewer("PUT", `/api/projects/${projectId}/ectd/sequences/0001`, { source: "built", leaves: [] })).status, 403);
+  assert.equal((await b("PUT", `/api/projects/${projectId}/ectd/sequences/0001`, { source: "built", leaves: [] })).status, 404);
+  assert.equal((await b("DELETE", `/api/projects/${projectId}/ectd/sequences/0000`)).status, 404);
+  const del = await a("DELETE", `/api/projects/${projectId}/ectd/sequences/0000`);
+  assert.deepEqual(del.data.ectd_sequences, []);
 });
 
 await step("large files go up in parts; text and AI review per item; quota", async () => {
