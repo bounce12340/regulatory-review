@@ -1,0 +1,2 @@
+# eCTD util files must stay byte-identical: TFDA checks their MD5 (validation rules A–F).
+cloudflare/public/vendor/ectd/* -text

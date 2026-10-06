@@ -318,7 +318,7 @@ function decorateItems(schemaType: string, items: ItemRow[]) {
 
 interface AttachmentInfo {
   id: number; item_id: number; filename: string; size_bytes: number; created_at: string; uploaded_by_name: string | null;
-  text_status: string; text_chars: number;
+  text_status: string; text_chars: number; ectd_node: string | null; ectd_title: string | null;
 }
 
 /**
@@ -358,7 +358,7 @@ function reviewJson(r: ReviewRow | undefined) {
 async function projectAttachments(env: Env, projectId: number): Promise<Map<number, AttachmentInfo[]>> {
   const { results } = await env.DB.prepare(
     `SELECT a.id, a.item_id, a.filename, a.size_bytes, a.created_at, u.full_name AS uploaded_by_name,
-            a.text_status, a.text_chars
+            a.text_status, a.text_chars, a.ectd_node, a.ectd_title
        FROM attachment a LEFT JOIN user u ON u.id = a.uploaded_by
       WHERE a.project_id = ? ORDER BY a.created_at, a.id`,
   ).bind(projectId).all<AttachmentInfo>();
@@ -371,10 +371,15 @@ async function projectAttachments(env: Env, projectId: number): Promise<Map<numb
   return byItem;
 }
 
+async function projectEctd(env: Env, projectId: number): Promise<unknown> {
+  const row = await env.DB.prepare("SELECT data FROM project_ectd WHERE project_id = ?").bind(projectId).first<{ data: string }>();
+  return row ? JSON.parse(row.data) : null;
+}
+
 async function projectDetail(env: Env, project: ProjectRow) {
-  const [items, files, reviews, used] = await Promise.all([
+  const [items, files, reviews, used, ectd] = await Promise.all([
     projectItems(env, project.id), projectAttachments(env, project.id), projectReviews(env, project.id),
-    caseUsageBytes(env, project.id),
+    caseUsageBytes(env, project.id), projectEctd(env, project.id),
   ]);
   return {
     project: {
@@ -393,6 +398,7 @@ async function projectDetail(env: Env, project: ProjectRow) {
     summary: summarize(items, project.deadline, undefined, project.status === "active"),
     action_items: actionItems(project.schema_type, items),
     rtf: rtfVerdict(project.schema_type, items),
+    ectd,
   };
 }
 
@@ -517,6 +523,7 @@ async function deleteProject(env: Env, user: AuthUser, id: number): Promise<Resp
     env.DB.prepare("DELETE FROM attachment WHERE project_id = ?").bind(id),
     env.DB.prepare("DELETE FROM item_review WHERE project_id = ?").bind(id),
     env.DB.prepare("DELETE FROM upload_session WHERE project_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM project_ectd WHERE project_id = ?").bind(id),
     env.DB.prepare("DELETE FROM checklist_item WHERE project_id = ?").bind(id),
     env.DB.prepare("DELETE FROM project WHERE id = ? AND company_id = ?").bind(id, user.company_id),
   ]);
@@ -812,6 +819,44 @@ async function putAttachmentText(request: Request, env: Env, user: AuthUser, id:
   return json({ ok: true, text_status: status, text_chars: status === "ok" ? text.length : 0 });
 }
 
+/** CTD section ("1.1.4", "3.2.s.4.1", "2.3.i") and leaf title for eCTD packaging. */
+const ECTD_NODE_RE = /^[1-5](?:\.[0-9a-z]{1,2}){0,5}$/;
+
+async function updateAttachment(request: Request, env: Env, user: AuthUser, id: number): Promise<Response> {
+  requireRole(user, "admin", "member");
+  const row = await attachmentRow(env, user, id);
+  const body = await readJson(request);
+  const cur = await env.DB.prepare("SELECT ectd_node, ectd_title FROM attachment WHERE id = ?").bind(row.id)
+    .first<{ ectd_node: string | null; ectd_title: string | null }>();
+  let node = cur?.ectd_node ?? null;
+  let title = cur?.ectd_title ?? null;
+  if (body.ectd_node !== undefined) {
+    node = body.ectd_node === null || body.ectd_node === "" ? null : str(body.ectd_node, "eCTD 節點", { max: 20 }).toLowerCase();
+    if (node !== null && !ECTD_NODE_RE.test(node)) throw new HttpError(400, "eCTD 節點格式不正確。");
+  }
+  if (body.ectd_title !== undefined) {
+    title = body.ectd_title === null ? null : str(body.ectd_title, "eCTD 標題", { max: 300, required: false }) || null;
+  }
+  await env.DB.prepare("UPDATE attachment SET ectd_node = ?, ectd_title = ? WHERE id = ?").bind(node, title, row.id).run();
+  return json({ id: row.id, ectd_node: node, ectd_title: title });
+}
+
+/** Envelope and product details for building the case's eCTD sequence. */
+async function putProjectEctd(request: Request, env: Env, user: AuthUser, id: number): Promise<Response> {
+  requireRole(user, "admin", "member");
+  await getProject(env, user, id);
+  const body = await readJson(request, 64 * 1024);
+  const data = body.ectd;
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new HttpError(400, "eCTD 資料格式不正確。");
+  const text = JSON.stringify(data);
+  if (text.length > 32 * 1024) throw new HttpError(413, "eCTD 資料過大。");
+  await env.DB.prepare(
+    `INSERT INTO project_ectd (project_id, data, updated_by, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(project_id) DO UPDATE SET data = excluded.data, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+  ).bind(id, text, user.id, nowIso()).run();
+  return json({ ectd: data });
+}
+
 async function downloadAttachment(env: Env, user: AuthUser, id: number): Promise<Response> {
   const row = await attachmentRow(env, user, id);
   const object = await env.FILES.get(row.r2_key);
@@ -894,6 +939,7 @@ async function deleteUser(env: Env, user: AuthUser, targetId: number): Promise<R
     env.DB.prepare("UPDATE attachment SET uploaded_by = NULL WHERE uploaded_by = ?").bind(target.id),
     env.DB.prepare("UPDATE item_review SET reviewed_by = NULL WHERE reviewed_by = ?").bind(target.id),
     env.DB.prepare("UPDATE upload_session SET created_by = NULL WHERE created_by = ?").bind(target.id),
+    env.DB.prepare("UPDATE project_ectd SET updated_by = NULL WHERE updated_by = ?").bind(target.id),
     env.DB.prepare("DELETE FROM user WHERE id = ? AND company_id = ?").bind(target.id, user.company_id),
   ]);
   return listUsers(env, user);
@@ -1010,6 +1056,8 @@ const routes: Array<[string, RegExp, Handler]> = [
   ["POST", /^\/api\/items\/(\d+)\/attachments$/, ({ request, env, user, params }) => uploadAttachment(request, env, user, idParam(params[0]))],
   ["GET", /^\/api\/attachments\/(\d+)$/, ({ env, user, params }) => downloadAttachment(env, user, idParam(params[0]))],
   ["DELETE", /^\/api\/attachments\/(\d+)$/, ({ env, user, params }) => deleteAttachment(env, user, idParam(params[0]))],
+  ["PATCH", /^\/api\/attachments\/(\d+)$/, ({ request, env, user, params }) => updateAttachment(request, env, user, idParam(params[0]))],
+  ["PUT", /^\/api\/projects\/(\d+)\/ectd$/, ({ request, env, user, params }) => putProjectEctd(request, env, user, idParam(params[0]))],
   ["PUT", /^\/api\/attachments\/(\d+)\/text$/, ({ request, env, user, params }) => putAttachmentText(request, env, user, idParam(params[0]))],
   ["POST", /^\/api\/items\/(\d+)\/uploads$/, ({ request, env, user, params }) => startUpload(request, env, user, idParam(params[0]))],
   ["PUT", /^\/api\/uploads\/([\w.~=+%-]{1,1024})\/parts\/(\d{1,5})$/, ({ request, env, user, params }) => uploadPart(request, env, user, decodeURIComponent(params[0]), Number(params[1]))],

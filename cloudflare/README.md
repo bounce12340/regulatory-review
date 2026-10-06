@@ -28,6 +28,8 @@ TFDA 查驗登記文件審查與進度追蹤平台，部署在 **Cloudflare Work
 | 風險自動判定 | 範本項目的風險依 `config/regulatory_schemas.yaml` 的 `risk_rules` 隨狀態自動計算；自訂項目可手動設定 |
 | 時程 / 多專案比較 | 截止日倒數、完成度與時程消耗對照、健康雷達圖 |
 | AI 文件分析 | 上傳含文字的 PDF、Word .docx、Excel .xlsx、純文字 → 瀏覽器轉成文字 → Ollama 雲端模型逐項比對檢查清單 → 缺口報告 |
+| eCTD 打包 | 依 TFDA「藥品查驗登記電子通用技術文件指引」eCTD-R2.1 把案件的 PDF 打包成送件 ZIP：填寫 tw-envelope（取號號碼、序列、送件目的與種類、Tier 1–5、申請者、藥品名稱、INN 等），每個附件指定 CTD 節點（Module 1 依附件一、Module 2／3 依 ICH Appendix 4）與頁面標題，系統自動命名檔案與資料夾，產生 tw-regional.xml、index.xml、index-md5.txt 與 util 檔（ICH 與 TW 的 DTD、MOD、XSL，checksum 與公告值一致），以 ZIP64 寫出（Chrome／Edge 直接寫入磁碟，6 GB 以上可用），完成後自動驗證。目前所有文件的 operation 為 new；Module 4／5 與 replace／delete 生命週期尚未支援 |
+| eCTD 驗證 | 上傳任何 eCTD 的 ZIP 或資料夾，在瀏覽器內依「藥品查驗登記電子通用技術文件驗證指引」eCTD-V-R2.1 檢查規則 A–P：util 檔 checksum、index.xml 與 tw-regional.xml 的 DTD 驗證、MD5、envelope、命名與路徑長度、未引用檔案、空資料夾、PDF 版本與損毀等，區分 P/F（不予收件）與 BP（提醒），可下載報告。需先前序列的生命週期規則，在同一包含多個序列時才檢查 |
 | 匯出 | Markdown、CSV（Excel 可開）、JSON、列印 / 存成 PDF |
 
 ## 部署到 Cloudflare

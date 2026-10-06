@@ -1,0 +1,212 @@
+<!--
+PUBLIC "-//TW//DTD eCTD TW Backbone 2.0//EN"
+In the eCTD File Organisation: "util/dtd/tw-regional.dtd"
+
+Date: Oktober 2025
+
+Author: EXTEDO
+
+Meaning or value of the suffixes:
+? : element must appear 0 or 1 time
+* : element must appear 0 or more time
++ : element must appear 1 or more times
+<none>: element must appear once and only once
+-->
+
+<!-- General declarations, external modules references................... -->
+
+<!ENTITY % leaf-node "(( leaf | node-extension )*)">
+
+<!ENTITY % envelope-module SYSTEM "tw-envelope.mod" >
+%envelope-module;
+
+<!ENTITY % leaf-module SYSTEM "tw-leaf.mod" >
+%leaf-module;
+
+
+<!-- Root element ..................................................... -->
+<!ELEMENT tw:tw-backbone (
+tw-envelope,
+m1-tw
+)>
+
+<!ATTLIST tw:tw-backbone
+xmlns:tw CDATA #FIXED "http://www.fda.gov.tw"
+xmlns:xlink CDATA #FIXED "http://www.w3c.org/1999/xlink"
+xml:lang CDATA #IMPLIED
+dtd-version CDATA #FIXED "2.0"
+>
+
+<!-- ................................................................... -->
+<!ELEMENT m1-tw (
+   m1-1-offdoc,
+   m1-2-affi?,
+   m1-3-labart?,
+   m1-4-lic?,
+   m1-5-letauthor?,
+   m1-6-refcountryappro?,
+   m1-7-formulbase?,
+   m1-8-gmpcerti?,
+   m1-9-bridgevalu?,
+   m1-10-locclinicalstudy?,
+   m1-11-locbabestudy?,
+   m1-12-contractmanuf?,
+   m1-13-riskmanagplan?,
+   m1-14-dmfletter?,
+   m1-15-desigapproletter?,
+   m1-16-refagenassessreport?,
+   m1-17-others?
+)>
+
+<!ELEMENT m1-1-offdoc (leaf*,
+   m1-1-1-form,
+   m1-1-2-applform?,
+   m1-1-3-reginf?,
+   m1-1-4-rtfcheck?,
+   m1-1-5-dataexc?,
+   m1-1-6-patinf?,
+   m1-1-7-decfor?,
+   m1-1-8-receip?
+)>
+<!-- ................................................................... -->
+<!ELEMENT m1-1-1-form         %leaf-node;>
+<!ELEMENT m1-1-2-applform         %leaf-node;>
+<!ELEMENT m1-1-3-reginf         %leaf-node;>
+<!ELEMENT m1-1-4-rtfcheck         %leaf-node;>
+<!ELEMENT m1-1-5-dataexc         %leaf-node;>
+<!ELEMENT m1-1-6-patinf         %leaf-node;>
+<!ELEMENT m1-1-7-decfor         %leaf-node;>   
+<!ELEMENT m1-1-8-receip         %leaf-node;>
+<!-- ................................................................... -->
+<!ELEMENT m1-2-affi (
+   m1-2-1-affia?,
+   m1-2-2-affib?,
+   m1-2-3-affic?
+)>
+
+<!ELEMENT m1-2-1-affia          %leaf-node;>
+<!ELEMENT m1-2-2-affib          %leaf-node;>
+<!ELEMENT m1-2-3-affic          %leaf-node;>
+   
+<!-- ................................................................... -->
+<!ELEMENT m1-3-labart (
+   m1-3-1-lab?,
+   m1-3-2-mpimg?,
+   m1-3-3-labcc?,
+   m1-3-4-art?,
+   m1-3-5-reflab?,
+   m1-3-6-proapp?
+)>
+
+<!ELEMENT m1-3-2-mpimg    %leaf-node;>
+<!ELEMENT m1-3-5-reflab    %leaf-node;>
+<!ELEMENT m1-3-6-proapp    %leaf-node;>
+<!-- ................................................................... -->
+
+
+<!ELEMENT m1-3-1-lab (leaf*,
+   m1-3-1-1-chilab?,
+   m1-3-1-2-englab?,
+   m1-3-1-3-orilab?
+)>
+
+<!ELEMENT m1-3-1-1-chilab   %leaf-node;>
+<!ELEMENT m1-3-1-2-englab   %leaf-node;>
+<!ELEMENT m1-3-1-3-orilab   %leaf-node;>
+
+<!-- ................................................................... -->
+<!ELEMENT m1-3-3-labcc (
+   m1-3-3-1-chco?,
+   m1-3-3-2-labhis?
+)>
+
+<!ELEMENT m1-3-3-1-chco    %leaf-node;>
+<!ELEMENT m1-3-3-2-labhis   %leaf-node;>
+
+<!-- ................................................................... -->
+<!ELEMENT m1-3-4-art (
+   m1-3-4-1-conlab?,
+   m1-3-4-2-outpac?,
+   m1-3-4-3-afp?,
+   m1-3-4-4-amd?
+)>
+
+<!ELEMENT m1-3-4-1-conlab    %leaf-node;>
+<!ELEMENT m1-3-4-2-outpac    %leaf-node;>
+<!ELEMENT m1-3-4-3-afp    %leaf-node;>
+<!ELEMENT m1-3-4-4-amd    %leaf-node;>
+
+<!-- ................................................................... -->
+<!ELEMENT m1-4-lic (leaf*,
+   m1-4-1-pharmalic?,
+   m1-4-2-busilic?,
+   m1-4-3-prodlic?,
+   m1-4-4-locmanuflic?,
+   m1-4-5-gdpappro?
+)>
+
+<!ELEMENT m1-4-1-pharmalic     %leaf-node;>
+<!ELEMENT m1-4-2-busilic    %leaf-node;>
+<!ELEMENT m1-4-3-prodlic    %leaf-node;>
+<!ELEMENT m1-4-4-locmanuflic    %leaf-node;>
+<!ELEMENT m1-4-5-gdpappro    %leaf-node;>
+
+
+<!-- ................................................................... -->
+<!ELEMENT m1-5-letauthor      %leaf-node;>
+
+
+<!-- ................................................................... -->
+<!ELEMENT m1-6-refcountryappro (leaf*,
+   m1-6-1-pharmaprodcerti?,
+   m1-6-2-salecerti?
+)>   
+
+<!ELEMENT m1-6-1-pharmaprodcerti     %leaf-node;>
+<!ELEMENT m1-6-2-salecerti     %leaf-node;>
+ 
+<!-- ................................................................... -->
+<!ELEMENT m1-7-formulbase %leaf-node;>
+
+<!-- ................................................................... -->
+<!ELEMENT m1-8-gmpcerti %leaf-node;>
+
+<!-- ................................................................... -->
+<!ELEMENT m1-9-bridgevalu %leaf-node;>
+<!-- ................................................................... -->
+
+<!ELEMENT m1-10-locclinicalstudy %leaf-node;>
+
+<!-- ................................................................... -->
+
+<!ELEMENT m1-11-locbabestudy     %leaf-node;>
+<!-- ................................................................... -->
+<!ELEMENT m1-12-contractmanuf (
+   m1-12-1-contractmanufform?,
+   m1-12-2-contractmanufagreementcopy?,
+   m1-12-3-contractmanufprodecrip?
+)>
+
+<!ELEMENT m1-12-1-contractmanufform     %leaf-node;>
+<!ELEMENT m1-12-2-contractmanufagreementcopy     %leaf-node;>
+<!ELEMENT m1-12-3-contractmanufprodecrip     %leaf-node;>
+
+<!-- ................................................................... -->
+
+<!ELEMENT m1-13-riskmanagplan     %leaf-node;>
+<!-- ................................................................... -->
+
+<!ELEMENT m1-14-dmfletter        %leaf-node;> 
+
+<!-- ................................................................... -->
+
+<!ELEMENT m1-15-desigapproletter        %leaf-node;> 
+<!-- ................................................................... -->
+
+<!ELEMENT m1-16-refagenassessreport        %leaf-node;> 
+
+<!-- ................................................................... -->
+
+<!ELEMENT m1-17-others     %leaf-node;> 
+
+<!-- ................................................................... -->
