@@ -592,6 +592,37 @@ details.disclose[open] > summary { margin-bottom: 14px; }
 .gap-body { padding: 0 0 14px; display: grid; gap: 6px; font-size: var(--t-sm); max-width: 72ch; }
 .gap-body b { font-weight: 600; margin-right: 4px; }
 
+/* ── eCTD ─────────────────────────────────────────────────────────── */
+/* Two tools on one page: a segmented switch like a binder's index tabs. */
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 3px; margin-bottom: 18px; background: var(--sheet); max-width: 100%; }
+.seg-btn { font: inherit; font-size: var(--t-sm); padding: 8px 16px; border: 0; background: none; color: var(--ink-2); cursor: pointer; border-bottom: 3px solid transparent; }
+.seg-btn + .seg-btn { border-left: 1px solid var(--rule); }
+.seg-btn[aria-selected="true"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--seal); }
+.sub-title { font-family: var(--kai); font-size: var(--t-md); margin: 18px 0 10px; }
+.ectd-table td { vertical-align: middle; padding: 8px 10px; }
+.ectd-table .e-file { min-width: 13em; max-width: 22em; overflow-wrap: anywhere; }
+.ectd-table .e-node { min-width: 14em; }
+.ectd-table .e-node select, .ectd-table .e-title input { font-size: var(--t-xs); padding: 5px 6px; }
+.ectd-table .e-title { min-width: 12em; }
+.ectd-table .e-path { font-size: var(--t-xs); color: var(--ink-2); overflow-wrap: anywhere; min-width: 16em; max-width: 30em; }
+.ectd-report .rtf-verdict { margin-bottom: 14px; }
+.seq-facts { display: flex; flex-wrap: wrap; gap: 6px 26px; margin: 0 0 14px; font-size: var(--t-sm); }
+.seq-facts dt { font-size: var(--t-xs); color: var(--ink-2); }
+.seq-facts dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.rule-id { display: inline-block; min-width: 3.6em; padding: 1px 6px; border-radius: 3px; font-size: var(--t-xs); font-weight: 700; text-align: center; }
+.rule-id.pf { background: var(--seal-wash); color: var(--seal); }
+.rule-id.bp { background: var(--progress-wash); color: var(--progress); }
+.ectd-report .gap-body { padding-left: 1.2em; list-style: disc; overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .seg { display: flex; }
+  .seg-btn { flex: 1; min-height: 44px; padding: 8px 6px; }
+  .ectd-table thead { display: none; }
+  .ectd-table tr { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+  .ectd-table td { padding: 0; border: 0; }
+  .ectd-table .e-file, .ectd-table .e-node, .ectd-table .e-title, .ectd-table .e-path { min-width: 0; max-width: none; }
+  .ectd-table .e-node select, .ectd-table .e-title input { font-size: 16px; }
+}
+
 /* ── Notices, empty states ─────────────────────────────────────────── */
 .notice { padding: 12px 16px; border-left: 4px solid var(--ink-3); background: var(--sheet); font-size: var(--t-sm); margin-bottom: 18px; max-width: 80ch; }
 .notice.warn { border-left-color: var(--progress); }

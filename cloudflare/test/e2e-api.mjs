@@ -297,6 +297,32 @@ await step("attachments: upload, download, tenant isolation, delete", async () =
   assert.equal((await a("GET", `/api/attachments/${id2}`)).status, 404);
 });
 
+await step("eCTD: node and title per attachment, envelope per case", async () => {
+  const up = await a("POST", `/api/items/${items[0].id}/attachments`, fileForm("form.pdf", "%PDF-1.7 x %%EOF"));
+  const id = up.data.attachment_id;
+  const p1 = await a("PATCH", `/api/attachments/${id}`, { ectd_node: "1.1.1", ectd_title: "藥品查驗登記申請書" });
+  assert.equal(p1.status, 200, JSON.stringify(p1.data));
+  assert.deepEqual([p1.data.ectd_node, p1.data.ectd_title], ["1.1.1", "藥品查驗登記申請書"]);
+  assert.equal((await a("PATCH", `/api/attachments/${id}`, { ectd_node: "../etc" })).status, 400);
+  assert.equal((await viewer("PATCH", `/api/attachments/${id}`, { ectd_node: "1.1.4" })).status, 403);
+  assert.equal((await b("PATCH", `/api/attachments/${id}`, { ectd_node: "1.1.4" })).status, 404);
+  // Clearing the node keeps the title.
+  const p2 = await a("PATCH", `/api/attachments/${id}`, { ectd_node: "" });
+  assert.deepEqual([p2.data.ectd_node, p2.data.ectd_title], [null, "藥品查驗登記申請書"]);
+
+  const ectd = { envelope: { identifier: "550e8400-e29b-41d4-a716-446655442895", sequence: "0000" }, product: { substance: "Examplin" } };
+  const put = await a("PUT", `/api/projects/${projectId}/ectd`, { ectd });
+  assert.equal(put.status, 200, JSON.stringify(put.data));
+  const detail = (await viewer("GET", `/api/projects/${projectId}`)).data;
+  assert.deepEqual(detail.ectd, ectd);
+  assert.equal(detail.items[0].attachments.find((x) => x.id === id).ectd_title, "藥品查驗登記申請書");
+  assert.equal((await a("PUT", `/api/projects/${projectId}/ectd`, { ectd: [1] })).status, 400);
+  assert.equal((await a("PUT", `/api/projects/${projectId}/ectd`, { ectd: { x: "y".repeat(40000) } })).status, 413);
+  assert.equal((await viewer("PUT", `/api/projects/${projectId}/ectd`, { ectd })).status, 403);
+  assert.equal((await b("PUT", `/api/projects/${projectId}/ectd`, { ectd })).status, 404);
+  await a("DELETE", `/api/attachments/${id}`);
+});
+
 await step("large files go up in parts; text and AI review per item; quota", async () => {
   const cfg = (await a("GET", "/api/config")).data.attachments;
   assert.equal(cfg.max_bytes, 500 * 1024 * 1024);

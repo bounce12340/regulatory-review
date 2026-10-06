@@ -5,6 +5,7 @@ import { renderOverview } from "./views/overview.js";
 import { renderTimeline, renderCompare } from "./views/portfolio.js";
 import { renderProjects } from "./views/projects.js";
 import { renderAi } from "./views/ai.js";
+import { renderEctd } from "./views/ectd.js";
 import { renderUsers, renderAccount } from "./views/admin.js";
 
 const app = document.getElementById("app");
@@ -15,6 +16,7 @@ const NAV = [
   { route: "compare", label: "案件比較", render: renderCompare },
   { route: "projects", label: "案件管理", render: renderProjects },
   { route: "ai", label: "AI 文件分析", render: renderAi },
+  { route: "ectd", label: "eCTD 送件", render: renderEctd },
   { route: "users", label: "使用者管理", render: renderUsers, admin: true },
   { route: "account", label: "帳號設定", render: renderAccount, hidden: true },
 ];
@@ -189,7 +191,7 @@ function renderShell(active) {
     tab("overview", "總覽"), tab("timeline", "時程"), tab("projects", "案件"), tab("ai", "AI 分析"),
     h("button", {
       type: "button", "aria-label": "更多選項",
-      "aria-current": ["compare", "users", "account"].includes(active) ? "page" : null,
+      "aria-current": ["compare", "ectd", "users", "account"].includes(active) ? "page" : null,
       onclick: () => shell.classList.toggle("nav-open"),
     }, "更多"),
   );
