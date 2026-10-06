@@ -45,6 +45,16 @@ function textResult(text) {
 // ── PDF ─────────────────────────────────────────────────────────────────────
 
 async function pdfText(buf) {
+  const { pages, numPages } = await pdfPages(buf);
+  const readable = pages.join("").replace(/\s/g, "").length;
+  if (readable < numPages * MIN_CHARS_PER_PAGE) {
+    throw new Error("這份 PDF 幾乎沒有可擷取的文字，可能是掃描檔。AI 服務無法讀取圖片，請改上傳含文字的 PDF 或 Word 檔，或先做 OCR。");
+  }
+  return pages.map((t, i) => `【第 ${i + 1} 頁】\n${t.trim()}`).join("\n\n");
+}
+
+/** Text of each page, stopping once maxChars have been read (large dossiers can run to thousands of pages). */
+async function pdfPages(buf, maxChars = Infinity) {
   const base = new URL("../vendor/pdfjs/", import.meta.url);
   const pdfjs = await import(new URL("pdf.min.mjs", base).href);
   pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdf.worker.min.mjs", base).href;
@@ -64,21 +74,58 @@ async function pdfText(buf) {
     throw new Error("無法讀取這份 PDF，檔案可能已損毀。");
   }
   const pages = [];
+  const numPages = doc.numPages;
   try {
-    for (let n = 1; n <= doc.numPages; n++) {
+    let read = 0;
+    for (let n = 1; n <= numPages && read < maxChars; n++) {
       const page = await doc.getPage(n);
       const { items } = await page.getTextContent();
-      pages.push(items.map((i) => (i.str ?? "") + (i.hasEOL ? "\n" : "")).join(""));
+      const text = items.map((i) => (i.str ?? "") + (i.hasEOL ? "\n" : "")).join("");
+      pages.push(text);
+      read += text.length;
       page.cleanup();
     }
   } finally {
     await task.destroy();
   }
-  const readable = pages.join("").replace(/\s/g, "").length;
-  if (readable < doc.numPages * MIN_CHARS_PER_PAGE) {
-    throw new Error("這份 PDF 幾乎沒有可擷取的文字，可能是掃描檔。AI 服務無法讀取圖片，請改上傳含文字的 PDF 或 Word 檔，或先做 OCR。");
+  return { pages, numPages };
+}
+
+// ── Text for whole-case AI review ───────────────────────────────────────────
+
+/** Keep in step with MAX_STORED_TEXT_CHARS in src/attachments.ts. */
+export const REVIEW_TEXT_CHARS = 300_000;
+
+/**
+ * Text of an uploaded file for AI review. Never throws: the status says what happened
+ * (ok | scanned | unsupported | failed) so the review can tell "no text" from "no file".
+ */
+export async function extractForReview(file) {
+  const ext = file.name.toLowerCase().split(".").pop();
+  try {
+    let text;
+    if (ext === "pdf") {
+      const buf = new Uint8Array(await file.arrayBuffer());
+      if (!(buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46)) return { status: "failed", text: "" };
+      const { pages, numPages } = await pdfPages(buf, REVIEW_TEXT_CHARS);
+      const readable = pages.join("").replace(/\s/g, "").length;
+      if (readable < pages.length * MIN_CHARS_PER_PAGE) return { status: "scanned", text: "" };
+      text = pages.map((t, i) => `【第 ${i + 1} 頁】\n${t.trim()}`).join("\n\n");
+      if (pages.length < numPages) text += `\n\n（全文共 ${numPages} 頁，只擷取前 ${pages.length} 頁）`;
+    } else if (ext === "docx") {
+      text = await docxText(new Uint8Array(await file.arrayBuffer()));
+    } else if (ext === "xlsx") {
+      text = await xlsxText(new Uint8Array(await file.arrayBuffer()));
+    } else if (["txt", "md", "csv", "xml"].includes(ext)) {
+      text = new TextDecoder("utf-8").decode(await file.slice(0, REVIEW_TEXT_CHARS * 4).arrayBuffer());
+    } else {
+      return { status: "unsupported", text: "" };
+    }
+    const clean = text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, REVIEW_TEXT_CHARS);
+    return clean ? { status: "ok", text: clean } : { status: "failed", text: "" };
+  } catch {
+    return { status: "failed", text: "" };
   }
-  return pages.map((t, i) => `【第 ${i + 1} 頁】\n${t.trim()}`).join("\n\n");
 }
 
 // ── ZIP ─────────────────────────────────────────────────────────────────────

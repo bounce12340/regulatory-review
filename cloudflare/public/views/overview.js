@@ -1,16 +1,20 @@
 // Project overview: case header (seal + document strip), checklist form, side rail.
 import { h, mount, toast, download, formData, busy, confirmDialog, textDialog, field } from "../lib/dom.js";
 import {
-  api, upload, fileSize, state, canEdit, refreshProjects, timelineElapsed, alertText,
+  api, fileSize, state, canEdit, refreshProjects, timelineElapsed, alertText,
   STATUS_LABEL, RISK_LABEL, OVERALL_LABEL,
 } from "../lib/api.js";
 import { docStrip, stripLegend, meter, seal } from "../lib/charts.js";
+import {
+  VERDICT_LABEL, isStale, needsAction, reviewBlock, reviewDetails, textNote, uploadFilesToItem, reviewPanel, openBatchUpload,
+} from "./casework.js";
 
 const STATUSES = ["pending", "in_progress", "under_review", "blocked", "completed", "not_applicable"];
 // 「是」in a TFDA RTF checklist: the document is in, or the item does not apply (with a reason).
 const isResolved = (i) => i.status === "completed" || i.status === "not_applicable";
 const NA_PREFIX = "不適用原因：";
 const RISKS = ["low", "medium", "high"];
+const AI_FILTERS = [["action", "AI：需處理"], ["pass", "AI：符合"], ["unreviewed", "AI：未審查或檔案已變更"]];
 const TODO_LIMIT = 6;
 // Below this share of elapsed time a timeline meter says nothing useful yet.
 const TIMELINE_MIN_ELAPSED = 5;
@@ -47,6 +51,8 @@ const CUSTOM_GROUP = { key: "custom", label: "自訂項目" };
 // Sections the user opened or closed, per project, for this browser tab. Unset sections
 // start closed only when every document in them is completed.
 const sectionOpen = new Map();
+// Items whose AI review reasons are showing; kept across redraws of the case page.
+const reviewOpen = new Set();
 
 export async function renderOverview(main, params, ctx) {
   const requested = Number(params[0]);
@@ -68,7 +74,7 @@ export async function renderOverview(main, params, ctx) {
     throw err;
   }
   if (!ctx.isCurrent()) return;
-  const filters = { status: "", risk: "", q: "" };
+  const filters = { status: "", risk: "", ai: "", q: "" };
   let first = true;
   draw();
 
@@ -151,9 +157,14 @@ function view(detail, filters, { onDetail, onFilter, animate }) {
             h("option", { value: "" }, "所有狀態"), STATUSES.map((s) => h("option", { value: s, selected: filters.status === s }, STATUS_LABEL[s]))),
           h("select", { class: "input", "aria-label": "依風險篩選", onchange: (e) => { filters.risk = e.target.value; onFilter(); } },
             h("option", { value: "" }, "所有風險"), RISKS.map((r) => h("option", { value: r, selected: filters.risk === r }, `${RISK_LABEL[r]}風險`))),
+          h("select", { class: "input ai-filter", "aria-label": "依 AI 審查結果篩選", onchange: (e) => { filters.ai = e.target.value; onFilter(); } },
+            h("option", { value: "" }, "所有 AI 結果"), AI_FILTERS.map(([v, label]) => h("option", { value: v, selected: filters.ai === v }, label))),
           h("input", { class: "input search", type: "search", placeholder: "搜尋文件或備註", value: filters.q, "aria-label": "搜尋",
             oninput: (e) => { filters.q = e.target.value; onFilter(); } }),
         ),
+        canEdit() ? h("div", { class: "btn-row batch-row no-print" },
+          h("button", { type: "button", class: "btn btn-primary", onclick: () => openBatchUpload(detail, onDetail) }, "批次上傳文件"),
+          h("span", { class: "help" }, "一次上傳整個送件資料夾，系統依 CTD 節點與檔名放到對應項目。")) : null,
         h("div", { class: "table-wrap" },
           h("table", { class: "checklist", id: "checklist-table" },
             h("thead", {}, h("tr", {},
@@ -167,6 +178,7 @@ function view(detail, filters, { onDetail, onFilter, animate }) {
 
       h("aside", { class: "rail" },
         detail.rtf ? rtfPanel(detail.rtf) : null,
+        detail.items.some((i) => i.ai_scope) ? reviewPanel(detail, onDetail) : null,
         h("section", { class: "sheet rail-time" },
           h("h2", { class: "sheet-title" }, "時程"),
           meter("文件完成度", summary.completion_rate),
@@ -208,7 +220,14 @@ function filterItems(items, f) {
   return items.filter((i) =>
     (!f.status || i.status === f.status) &&
     (!f.risk || i.risk_level === f.risk) &&
+    (!f.ai || aiMatches(i, f.ai)) &&
     (!q || i.item_name.toLowerCase().includes(q) || (i.notes ?? "").toLowerCase().includes(q)));
+}
+
+function aiMatches(item, filter) {
+  if (filter === "action") return needsAction(item) && !isStale(item);
+  if (filter === "pass") return item.review?.verdict === "pass" && !isStale(item);
+  return item.ai_scope && item.status !== "not_applicable" && (!item.review || isStale(item));
 }
 
 function countLabel(items, f) {
@@ -279,12 +298,18 @@ function checklistBodies(detail, filters, onDetail) {
       toast(err.message, "error");
     }
   };
-  const row = (item) => itemRow(item, seq.get(item), save, onDetail);
+  // A single-item review changes only that item; redraw from the same detail.
+  const onReviewed = (id, review) => {
+    const target = detail.items.find((i) => i.id === id);
+    if (target) target.review = review;
+    onDetail(detail);
+  };
+  const row = (item) => itemRow(item, seq.get(item), save, onDetail, onReviewed);
 
   if (!groups) return [h("tbody", {}, shown.map(row))];
 
   // While filtering, every matching row stays visible; sections with no match drop out.
-  const filtering = Boolean(filters.status || filters.risk || filters.q.trim());
+  const filtering = Boolean(filters.status || filters.risk || filters.ai || filters.q.trim());
   const visible = new Set(shown);
   return groups.flatMap((g) => {
     const rows = g.items.filter((i) => visible.has(i));
@@ -322,13 +347,21 @@ function decorative(el) {
   return el;
 }
 
-function itemRow(item, n, save, onDetail) {
+function itemRow(item, n, save, onDetail, onReviewed) {
   const editable = canEdit();
-  return h("tr", {},
+  const detailsId = `review-${item.id}`;
+  const details = item.review ? h("tr", { class: "review-row", id: detailsId, hidden: !reviewOpen.has(item.id) },
+    h("td", { class: "c-seq" }), h("td", { colspan: 5 }, reviewDetails(item, onReviewed))) : null;
+  const onToggle = (open) => {
+    if (open) reviewOpen.add(item.id); else reviewOpen.delete(item.id);
+    details.hidden = !open;
+  };
+  return [h("tr", {},
     h("td", { class: "seq c-seq" }, n),
     h("td", { class: "c-name" },
       h("div", { class: "item-name" }, item.item_name),
       h("div", { class: "item-sub" }, item.item_key ? (item.required ? "必要文件" : "依適用性") : "自訂項目"),
+      reviewBlock(item, onReviewed, { open: reviewOpen.has(item.id), detailsId, onToggle }),
       item.criteria?.length ? h("details", { class: "criteria" },
         h("summary", {}, `審查門檻（${item.criteria.length} 項）`),
         h("ul", {}, item.criteria.map((c) => h("li", {}, c)))) : null,
@@ -379,7 +412,7 @@ function itemRow(item, n, save, onDetail) {
         },
       }, "刪除")
       : null),
-  );
+  ), details];
 }
 
 /** Files attached to a checklist item: download links, plus add/delete for editors. */
@@ -388,18 +421,7 @@ function attachments(item, editable, onDetail) {
   if (!files.length && !editable) return null;
   const limits = state.config.attachments;
 
-  const add = async (picked) => {
-    for (const f of picked) {
-      const ext = f.name.includes(".") ? f.name.split(".").pop().toLowerCase() : "";
-      if (limits && !limits.extensions.includes(ext)) { toast(`「${f.name}」的檔案類型不支援。`, "error"); continue; }
-      if (limits && f.size > limits.max_bytes) { toast(`「${f.name}」超過 ${fileSize(limits.max_bytes)} 上限。`, "error"); continue; }
-      try {
-        toast(`上傳中：${f.name}`);
-        onDetail(await upload(`/api/items/${item.id}/attachments`, f));
-        toast(`已附加「${f.name}」`);
-      } catch (err) { toast(err.message, "error"); }
-    }
-  };
+  const add = (picked) => uploadFilesToItem(item, picked, onDetail).catch((err) => toast(err.message, "error"));
   const input = h("input", {
     type: "file", multiple: true, class: "sr-only",
     accept: limits ? limits.extensions.map((e) => `.${e}`).join(",") : null,
@@ -410,6 +432,7 @@ function attachments(item, editable, onDetail) {
     files.length ? h("ul", {}, files.map((a) => h("li", {},
       h("a", { href: `/api/attachments/${a.id}`, title: a.uploaded_by_name ? `${a.uploaded_by_name} 上傳於 ${a.created_at.slice(0, 10)}` : null }, a.filename),
       h("span", { class: "muted" }, fileSize(a.size_bytes)),
+      textNote(a),
       editable ? h("button", {
         class: "link-btn danger no-print", "aria-label": `刪除附件 ${a.filename}`,
         onclick: async () => {
@@ -461,10 +484,19 @@ function toMarkdown({ project, summary, items, action_items, rtf }) {
     "",
     "## 文件檢查清單",
     "",
-    "| # | 文件 | 狀態 | 風險 | 備註 | 附件 |",
-    "|---|------|------|------|------|------|",
-    ...displayOrder(items).map((i, n) => `| ${n + 1} | ${esc(i.item_name)} | ${STATUS_LABEL[i.status]} | ${RISK_LABEL[i.risk_level]} | ${esc(i.notes)} | ${esc((i.attachments ?? []).map((a) => a.filename).join("、"))} |`),
+    "| # | 文件 | 狀態 | 風險 | AI 審查 | 備註 | 附件 |",
+    "|---|------|------|------|---------|------|------|",
+    ...displayOrder(items).map((i, n) => `| ${n + 1} | ${esc(i.item_name)} | ${STATUS_LABEL[i.status]} | ${RISK_LABEL[i.risk_level]} | ${aiCell(i)} | ${esc(i.notes)} | ${esc((i.attachments ?? []).map((a) => a.filename).join("、"))} |`),
   ];
+  const flagged = displayOrder(items).filter((i) => needsAction(i));
+  if (flagged.length) {
+    lines.push("", "## AI 審查：需補件或修正", "");
+    for (const i of flagged) {
+      lines.push(`### ${i.item_name}（${VERDICT_LABEL[i.review.verdict]}${isStale(i) ? "，檔案已變更" : ""}）`, "", esc(i.review.summary));
+      for (const x of i.review.fixes) lines.push(`- ${x}`);
+      lines.push("");
+    }
+  }
   if (rtf) {
     lines.push("", "## RTF 退件判定（自我檢核）", "", `- **若現在送件：** ${rtf.verdict === "refuse" ? "退件" : "續審"}`);
     for (const r of rtf.rules) {
@@ -477,6 +509,11 @@ function toMarkdown({ project, summary, items, action_items, rtf }) {
     for (const a of action_items) lines.push(`- [${a.priority === "high" ? "高" : "中"}] **${a.item}**：${a.action}`);
   }
   return lines.join("\n");
+}
+
+function aiCell(item) {
+  if (!item.review) return "";
+  return `${VERDICT_LABEL[item.review.verdict] ?? item.review.verdict}${isStale(item) ? "（檔案已變更）" : ""}`;
 }
 
 function toCsv({ items }) {

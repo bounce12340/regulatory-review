@@ -3,8 +3,18 @@
  * helpers decide what is accepted and how a stored file is served back.
  */
 
-export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
-export const MAX_ATTACHMENTS_PER_ITEM = 20;
+const MB = 1024 * 1024;
+/** TFDA eCTD validation rule O.13: no single file may exceed 500 MB. */
+export const MAX_ATTACHMENT_BYTES = 500 * MB;
+/** Files up to this size go up in one request; larger ones in parts (Workers bodies stop at 100 MB). */
+export const SINGLE_UPLOAD_MAX_BYTES = 50 * MB;
+export const UPLOAD_PART_BYTES = 50 * MB;
+export const MAX_ATTACHMENTS_PER_ITEM = 50;
+/** Default storage per case; a full eCTD dossier is often 6 GB or more. Override with CASE_QUOTA_GB. */
+export const DEFAULT_CASE_QUOTA_GB = 20;
+/** Text kept per file for AI review (the browser extracts it at upload time). */
+export const MAX_STORED_TEXT_CHARS = 300_000;
+export const TEXT_STATUSES = ["ok", "scanned", "unsupported", "failed"] as const;
 
 /**
  * Accepted extensions and the Content-Type each is served with. The type comes from this
@@ -21,6 +31,9 @@ export const ATTACHMENT_TYPES: Record<string, string> = {
   txt: "text/plain; charset=utf-8",
   csv: "text/csv; charset=utf-8",
   png: "image/png",
+  gif: "image/gif",
+  svg: "image/svg+xml",
+  xml: "application/xml",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
   zip: "application/zip",

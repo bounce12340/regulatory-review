@@ -24,6 +24,17 @@ const result = {
   action_items: ["補齊衛生安全性試驗報告", "補附原料來源證明"],
 };
 
+// Reply for a per-item review (whole-case review); chosen when the prompt asks for one.
+const review = {
+  verdict: "insufficient",
+  summary: "安定性資料只有 3 個月長期試驗，未達 6 個月。",
+  findings: [
+    { criterion: 1, status: "not_met", note: "長期試驗只到 3 個月。" },
+    { criterion: 2, status: "met", note: "試驗條件與方法有說明。" },
+  ],
+  fixes: ["補齊三批 6 個月長期與 6 個月加速安定性數據。"],
+};
+
 http.createServer((req, res) => {
   if (req.method === "GET" && req.url === "/__last") {
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -46,9 +57,11 @@ http.createServer((req, res) => {
       return;
     }
     const retry = body.messages.some((m) => m.role === "assistant");
+    const isReview = body.messages.some((m) => m.role === "user" && m.content.includes("## 審查門檻"));
+    const payload = isReview ? review : result;
     const text = body.model === "mock-broken-once" && !retry
       ? "抱歉，以下是分析結果：缺少安全性試驗報告。"
-      : `以下是分析結果：\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\``;
+      : `以下是分析結果：\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``;
     res.writeHead(200, { "Content-Type": "application/x-ndjson" });
     for (let i = 0; i < text.length; i += 80) {
       res.write(JSON.stringify({ model: body.model, message: { role: "assistant", content: text.slice(i, i + 80) }, done: false }) + "\n");
