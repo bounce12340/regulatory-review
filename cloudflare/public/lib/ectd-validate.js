@@ -11,6 +11,7 @@ import { readZip, streamIter, streamBytes } from "./zip.js";
 import { Md5 } from "./md5.js";
 import { parseXml, walk } from "./xml.js";
 import { parseDtd, validate as validateDtd } from "./dtd.js";
+import { extractLeaves, lifecycleFindings } from "./ectd-lifecycle.js";
 import {
   UTIL_FILES, TW_REGIONAL_PATH, MAX_NAME, MAX_PATH, MAX_FILE_BYTES, NAME_RE, M1_FORMATS, ICH_FORMATS, TW_M1,
 } from "./ectd-spec.js";
@@ -75,9 +76,11 @@ export function folderEntries(files) {
 
 /**
  * @param {Entry[]} entries
- * @param {{onProgress?: (done: number, total: number, path: string) => void, signal?: AbortSignal}} opts
+ * @param {{onProgress?: (done: number, total: number, path: string) => void, signal?: AbortSignal,
+ *   history?: {sequence: string, uuid: string|null, leaves: object[]}[]}} opts
+ *   history: manifests of sequences submitted before (for the lifecycle rules)
  */
-export async function validateEntries(entries, { onProgress, signal } = {}) {
+export async function validateEntries(entries, { onProgress, signal, history = [] } = {}) {
   entries = entries.filter((e) => !SKIP_RE.test(e.path)).map((e) => ({ ...e, path: e.path.replace(/^\/+/, "") }));
   const files = entries.filter((e) => !e.dir && !e.path.endsWith("/"));
   const roots = [...new Set(files.map((e) => /^(?:(.*?)\/)?(\d{4})\/index\.xml$/i.exec(e.path)).filter(Boolean).map((m) => (m[1] ? `${m[1]}/` : "") + m[2]))];
@@ -97,23 +100,49 @@ export async function validateEntries(entries, { onProgress, signal } = {}) {
   const progress = { done: 0, total, onProgress, signal };
   const sequences = [];
   for (const root of roots) sequences.push(await validateSequence(root, entries, files, progress));
-  // Lifecycle across the sequences in this package.
+  // Lifecycle: against earlier sequences in this package, plus any history passed in.
   const byApp = new Map();
   for (const s of sequences) byApp.set(s.appFolder, [...(byApp.get(s.appFolder) ?? []), s]);
   for (const list of byApp.values()) {
-    list.sort((a, b) => a.seq.localeCompare(b.seq));
-    for (let i = 1; i < list.length; i++) {
-      const prev = list[i - 1];
-      const cur = list[i];
-      cur.checked.add("M.4");
-      cur.checked.add("I.8");
-      if (Number(cur.seq) !== Number(prev.seq) + 1) cur.findings.push(f("M.4", `序列 ${cur.seq} 與前一序列 ${prev.seq} 之間跳號。`));
-      if (cur.uuid && prev.uuid && cur.uuid !== prev.uuid) cur.findings.push(f("I.8", `UUID ${cur.uuid} 與序列 ${prev.seq} 的 ${prev.uuid} 不同。`));
+    for (const cur of list) {
+      const inPackage = list.filter((s) => s.seq < cur.seq).map((s) => s.manifest);
+      const known = [...history.filter((h) => !inPackage.some((m) => m.sequence === h.sequence)), ...inPackage];
+      if (!known.length) continue;
+      for (const r of ["I.8", "K.9", "K.10", "K.12", "K.BP1", "M.2", "M.4"]) cur.checked.add(r);
+      for (const x of lifecycleFindings(cur.manifest, known)) cur.findings.push(f(x.rule, x.message));
     }
   }
   // Lifecycle rules count as checked only when the earlier sequences were in this package.
   for (const s of sequences) s.notChecked = [...LIFECYCLE.filter((r) => !s.checked.has(r)), ...NOT_AUTOMATED];
   return { sequences, findings: [] };
+}
+
+/**
+ * What each sequence in a package contains, read from its backbone XML only (no documents are
+ * hashed), for recording sequences submitted earlier.
+ * @returns {Promise<{sequence: string, uuid: string|null, appFolder: string|null, leaves: object[]}[]>}
+ */
+export async function readManifests(entries) {
+  entries = entries.filter((e) => !SKIP_RE.test(e.path)).map((e) => ({ ...e, path: e.path.replace(/^\/+/, "") }));
+  const byPath = new Map(entries.map((e) => [e.path, e]));
+  const out = [];
+  for (const e of entries) {
+    const m = /^(?:(.*?)\/)?(\d{4})\/index\.xml$/i.exec(e.path);
+    if (!m) continue;
+    const root = e.path.slice(0, -"index.xml".length);
+    let index;
+    try { index = parseXml(await readText(e)); } catch (err) { throw new Error(`序列 ${m[2]} 的 index.xml 無法解析：${err.message}`); }
+    const twEntry = byPath.get(`${root}${TW_REGIONAL_PATH}`);
+    let tw = null;
+    if (twEntry) {
+      try { tw = parseXml(await readText(twEntry)); } catch (err) { throw new Error(`序列 ${m[2]} 的 tw-regional.xml 無法解析：${err.message}`); }
+    }
+    out.push({
+      sequence: m[2], appFolder: m[1] ? m[1].split("/").pop() : null,
+      uuid: tw ? readEnvelope(tw)?.identifier || null : null, leaves: extractLeaves(index, tw),
+    });
+  }
+  return out.sort((a, b) => a.sequence.localeCompare(b.sequence));
 }
 
 function f(rule, message, path) {
@@ -279,6 +308,7 @@ async function validateSequence(root, allEntries, files, progress) {
   };
   collect(index, "", "index.xml");
   collect(regional, "m1/tw/", TW_REGIONAL_PATH);
+  result.manifest = { sequence: seq, uuid: result.envelope?.identifier ?? null, leaves: extractLeaves(index, regional) };
   result.stats.leaves = leaves.length;
   if (index && twEntry && !leaves.some((l) => l.target === TW_REGIONAL_PATH)) add("I.1", "index.xml 的 m1 沒有引用 m1/tw/tw-regional.xml。", "index.xml");
 

@@ -376,10 +376,19 @@ async function projectEctd(env: Env, projectId: number): Promise<unknown> {
   return row ? JSON.parse(row.data) : null;
 }
 
+async function projectEctdSequences(env: Env, projectId: number) {
+  const { results } = await env.DB.prepare(
+    `SELECT s.sequence, s.source, s.uuid, s.leaves, s.created_at, u.full_name AS created_by_name
+       FROM ectd_sequence s LEFT JOIN user u ON u.id = s.created_by
+      WHERE s.project_id = ? ORDER BY s.sequence`,
+  ).bind(projectId).all<{ sequence: string; source: string; uuid: string | null; leaves: string; created_at: string; created_by_name: string | null }>();
+  return results.map((r) => ({ ...r, leaves: JSON.parse(r.leaves) }));
+}
+
 async function projectDetail(env: Env, project: ProjectRow) {
-  const [items, files, reviews, used, ectd] = await Promise.all([
+  const [items, files, reviews, used, ectd, ectdSequences] = await Promise.all([
     projectItems(env, project.id), projectAttachments(env, project.id), projectReviews(env, project.id),
-    caseUsageBytes(env, project.id), projectEctd(env, project.id),
+    caseUsageBytes(env, project.id), projectEctd(env, project.id), projectEctdSequences(env, project.id),
   ]);
   return {
     project: {
@@ -399,6 +408,7 @@ async function projectDetail(env: Env, project: ProjectRow) {
     action_items: actionItems(project.schema_type, items),
     rtf: rtfVerdict(project.schema_type, items),
     ectd,
+    ectd_sequences: ectdSequences,
   };
 }
 
@@ -524,6 +534,7 @@ async function deleteProject(env: Env, user: AuthUser, id: number): Promise<Resp
     env.DB.prepare("DELETE FROM item_review WHERE project_id = ?").bind(id),
     env.DB.prepare("DELETE FROM upload_session WHERE project_id = ?").bind(id),
     env.DB.prepare("DELETE FROM project_ectd WHERE project_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM ectd_sequence WHERE project_id = ?").bind(id),
     env.DB.prepare("DELETE FROM checklist_item WHERE project_id = ?").bind(id),
     env.DB.prepare("DELETE FROM project WHERE id = ? AND company_id = ?").bind(id, user.company_id),
   ]);
@@ -857,6 +868,44 @@ async function putProjectEctd(request: Request, env: Env, user: AuthUser, id: nu
   return json({ ectd: data });
 }
 
+const ECTD_OPS = new Set(["new", "replace", "delete", "append"]);
+const MAX_SEQUENCE_LEAVES = 20_000;
+
+/** Records what an eCTD sequence contained (built here, or imported from a submitted ZIP). */
+async function putEctdSequence(request: Request, env: Env, user: AuthUser, id: number, sequence: string): Promise<Response> {
+  requireRole(user, "admin", "member");
+  await getProject(env, user, id);
+  const body = await readJson(request, 8 * 1024 * 1024);
+  const source = oneOf(body.source, ["built", "imported"] as const, "來源");
+  const uuid = body.uuid === null || body.uuid === undefined ? null : str(body.uuid, "UUID", { max: 64 });
+  if (!Array.isArray(body.leaves) || body.leaves.length > MAX_SEQUENCE_LEAVES) throw new HttpError(400, "leaf 清單格式不正確。");
+  const text = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : null);
+  // Keep only the fields lifecycle needs, with bounded sizes.
+  const leaves = body.leaves.map((l: Record<string, unknown>) => {
+    if (!l || typeof l !== "object") throw new HttpError(400, "leaf 格式不正確。");
+    const op = String(l.op ?? "");
+    if (!ECTD_OPS.has(op) || (l.xml !== "index" && l.xml !== "tw") || typeof l.id !== "string" || !l.id) throw new HttpError(400, "leaf 格式不正確。");
+    return {
+      id: l.id.slice(0, 200), xml: l.xml, op, node: text(l.node, 20), section: text(l.section, 2000) ?? "",
+      title: text(l.title, 500) ?? "", path: text(l.path, 400), md5: text(l.md5, 64) ?? "",
+      modifiedFile: text(l.modifiedFile, 400), extension: Boolean(l.extension),
+    };
+  });
+  await env.DB.prepare(
+    `INSERT INTO ectd_sequence (project_id, sequence, source, uuid, leaves, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(project_id, sequence) DO UPDATE SET source = excluded.source, uuid = excluded.uuid, leaves = excluded.leaves,
+       created_by = excluded.created_by, created_at = excluded.created_at`,
+  ).bind(id, sequence, source, uuid, JSON.stringify(leaves), user.id, nowIso()).run();
+  return json({ ectd_sequences: await projectEctdSequences(env, id) });
+}
+
+async function deleteEctdSequence(env: Env, user: AuthUser, id: number, sequence: string): Promise<Response> {
+  requireRole(user, "admin", "member");
+  await getProject(env, user, id);
+  await env.DB.prepare("DELETE FROM ectd_sequence WHERE project_id = ? AND sequence = ?").bind(id, sequence).run();
+  return json({ ectd_sequences: await projectEctdSequences(env, id) });
+}
+
 async function downloadAttachment(env: Env, user: AuthUser, id: number): Promise<Response> {
   const row = await attachmentRow(env, user, id);
   const object = await env.FILES.get(row.r2_key);
@@ -940,6 +989,7 @@ async function deleteUser(env: Env, user: AuthUser, targetId: number): Promise<R
     env.DB.prepare("UPDATE item_review SET reviewed_by = NULL WHERE reviewed_by = ?").bind(target.id),
     env.DB.prepare("UPDATE upload_session SET created_by = NULL WHERE created_by = ?").bind(target.id),
     env.DB.prepare("UPDATE project_ectd SET updated_by = NULL WHERE updated_by = ?").bind(target.id),
+    env.DB.prepare("UPDATE ectd_sequence SET created_by = NULL WHERE created_by = ?").bind(target.id),
     env.DB.prepare("DELETE FROM user WHERE id = ? AND company_id = ?").bind(target.id, user.company_id),
   ]);
   return listUsers(env, user);
@@ -1057,6 +1107,8 @@ const routes: Array<[string, RegExp, Handler]> = [
   ["GET", /^\/api\/attachments\/(\d+)$/, ({ env, user, params }) => downloadAttachment(env, user, idParam(params[0]))],
   ["DELETE", /^\/api\/attachments\/(\d+)$/, ({ env, user, params }) => deleteAttachment(env, user, idParam(params[0]))],
   ["PATCH", /^\/api\/attachments\/(\d+)$/, ({ request, env, user, params }) => updateAttachment(request, env, user, idParam(params[0]))],
+  ["PUT", /^\/api\/projects\/(\d+)\/ectd\/sequences\/(\d{4})$/, ({ request, env, user, params }) => putEctdSequence(request, env, user, idParam(params[0]), params[1])],
+  ["DELETE", /^\/api\/projects\/(\d+)\/ectd\/sequences\/(\d{4})$/, ({ env, user, params }) => deleteEctdSequence(env, user, idParam(params[0]), params[1])],
   ["PUT", /^\/api\/projects\/(\d+)\/ectd$/, ({ request, env, user, params }) => putProjectEctd(request, env, user, idParam(params[0]))],
   ["PUT", /^\/api\/attachments\/(\d+)\/text$/, ({ request, env, user, params }) => putAttachmentText(request, env, user, idParam(params[0]))],
   ["POST", /^\/api\/items\/(\d+)\/uploads$/, ({ request, env, user, params }) => startUpload(request, env, user, idParam(params[0]))],
