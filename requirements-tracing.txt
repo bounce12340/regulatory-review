@@ -1,0 +1,4 @@
+# Optional: Future AGI tracing for the LLM gap analysis (see ai/tracing.py).
+# Install on top of requirements.txt, then set FI_API_KEY and FI_SECRET_KEY:
+#   pip install -r requirements.txt -r requirements-tracing.txt
+fi-instrumentation-otel==1.1.0

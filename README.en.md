@@ -95,6 +95,22 @@ regulatory-review/
 - Auto-parse PDF/Word documents
 - Risk assessment and recommendation generation
 
+#### Future AGI tracing (optional)
+
+When configured, every AI gap analysis is recorded as an LLM trace in [Future AGI](https://github.com/future-agi/future-agi) (model, tokens, latency, success or failure), so you can monitor and evaluate the analysis quality. Nothing is enabled unless the keys are set.
+
+```bash
+pip install -r requirements.txt -r requirements-tracing.txt
+export FI_API_KEY=...          # Future AGI API key
+export FI_SECRET_KEY=...
+export FI_PROJECT_NAME=regulatory-review   # optional, this is the default
+# Optional: send only model, tokens and timing, not the document or the response
+export FI_HIDE_INPUTS=true
+export FI_HIDE_OUTPUTS=true
+```
+
+⚠️ By default the full prompt is sent, and it contains the uploaded application document. Set `FI_HIDE_INPUTS` / `FI_HIDE_OUTPUTS` for confidential documents. See `ai/tracing.py`.
+
 ### 4. Report Generation
 - Standardized review reports (PDF/Word)
 - Pass/Fail status indicators
