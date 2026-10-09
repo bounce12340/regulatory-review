@@ -11,6 +11,8 @@ import json
 import os
 from typing import Optional
 
+from .tracing import llm_span
+
 SYSTEM_PROMPT = """你是一位資深的台灣 TFDA（食品藥物管理署）法規事務專家，
 擁有超過 15 年藥品、食品及醫療器材查驗登記的實務經驗。
 
@@ -106,6 +108,12 @@ class MultiProviderLLMClient:
         "gemini":    {"input": 0.0, "output": 0.0},    # pay-as-you-go
     }
 
+    MODELS = {
+        "anthropic": "claude-opus-4-6",
+        "openai": "gpt-4-turbo",
+        "gemini": "gemini-2.0-flash",
+    }
+
     MAX_INPUT_CHARS = 80_000
 
     def __init__(self, api_key: Optional[str] = None, provider: Optional[str] = None):
@@ -155,21 +163,30 @@ class MultiProviderLLMClient:
         prompt = _build_analysis_prompt(doc_text, project_type,
                                         requirements_text, filename)
 
-        if self._provider == "anthropic":
-            result_text = self._call_anthropic(client, prompt)
-        elif self._provider == "openai":
-            result_text = self._call_openai(client, prompt)
-        elif self._provider == "gemini":
-            result_text = self._call_gemini(client, prompt)
-        else:
+        calls = {
+            "anthropic": self._call_anthropic,
+            "openai": self._call_openai,
+            "gemini": self._call_gemini,
+        }
+        if self._provider not in calls:
             raise ValueError(f"Unknown provider: {self._provider}")
+
+        # No-op unless FI_API_KEY / FI_SECRET_KEY are set (see ai/tracing.py).
+        with llm_span(
+            "tfda_gap_analysis",
+            provider=self._provider,
+            model=self.MODELS[self._provider],
+            prompt=prompt,
+        ) as span:
+            result_text = calls[self._provider](client, prompt)
+            span.record(result_text, self._last_input_tokens, self._last_output_tokens)
 
         return self._parse_json_response(result_text)
 
     def _call_anthropic(self, client, prompt: str) -> str:
         result_text = ""
         with client.messages.stream(
-            model="claude-opus-4-6",
+            model=self.MODELS["anthropic"],
             max_tokens=8192,
             thinking={"type": "adaptive"},
             system=SYSTEM_PROMPT,
@@ -184,7 +201,7 @@ class MultiProviderLLMClient:
 
     def _call_openai(self, client, prompt: str) -> str:
         response = client.chat.completions.create(
-            model="gpt-4-turbo",
+            model=self.MODELS["openai"],
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -198,7 +215,7 @@ class MultiProviderLLMClient:
         return msg.content or ""
 
     def _call_gemini(self, client, prompt: str) -> str:
-        model = client.get_model("gemini-2.0-flash")
+        model = client.get_model(self.MODELS["gemini"])
         response = client.generate_text(
             model=model,
             prompt=prompt,

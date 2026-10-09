@@ -2,7 +2,7 @@
 # Generated: 2026-03-24
 
 # Core framework
-streamlit==1.32.0
+streamlit==1.36.0
 streamlit-authenticator==0.2.3
 
 # Data handling
@@ -19,7 +19,7 @@ python-docx==1.1.0
 reportlab==4.1.0
 
 # HTTP requests (for update checking)
-requests==2.31.0
+requests==2.32.3
 urllib3==2.2.1
 
 # Database
