@@ -1,6 +1,6 @@
 // Portfolio views: Gantt timeline across cases, and a side-by-side ledger.
 import { h, mount } from "../lib/dom.js";
-import { api, state, refreshProjects, timelineElapsed, overallTag, STATUS_LABEL, RISK_LABEL, OVERALL_LABEL } from "../lib/api.js";
+import { api, state, refreshProjects, timelineElapsed, overallTag, overallTagText, STATUS_LABEL, RISK_LABEL } from "../lib/api.js";
 import { gantt, countStrip, docStrip } from "../lib/charts.js";
 
 function head(title, sub) {
@@ -69,7 +69,7 @@ export async function renderCompare(main, _params, ctx) {
               class: `item-sub${p.summary.alert_reasons.some((r) => r === "overdue" || r === "due_soon") ? " risk high" : ""}`,
             },
               p.summary.days_left < 0 ? `逾期 ${-p.summary.days_left} 天` : `剩 ${p.summary.days_left} 天`) : null),
-          h("td", { class: "k-tag" }, h("span", overallTag(p.summary), OVERALL_LABEL[p.summary.overall_status])),
+          h("td", { class: "k-tag" }, h("span", overallTag(p.summary), overallTagText(p.summary))),
         ))),
       )),
     ),
