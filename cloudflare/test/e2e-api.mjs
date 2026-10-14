@@ -468,6 +468,14 @@ await step("AI endpoint: validation and missing-key handling", async () => {
   }
   // PDFs are converted to text in the browser; a request without text is rejected.
   assert.equal((await a("POST", "/api/ai/analyze", { schema_type: "food_registration", filename: "a.pdf", pdf_base64: "JVBERi0=" })).status, cfg.ai_enabled ? 400 : 503);
+  if (cfg.ai_enabled) {
+    const many = (n, text = "x") => Array.from({ length: n }, (_, i) => ({ filename: `f${i}.txt`, text }));
+    assert.equal((await a("POST", "/api/ai/analyze", { schema_type: "food_registration", files: [] })).status, 400);
+    assert.equal((await a("POST", "/api/ai/analyze", { schema_type: "food_registration", files: many(21) })).status, 400);
+    assert.equal((await a("POST", "/api/ai/analyze", { schema_type: "food_registration", files: [{ filename: "a.txt", text: "x" }, { filename: "b.txt", text: " " }] })).status, 400);
+    // The text limit applies to all files together.
+    assert.equal((await a("POST", "/api/ai/analyze", { schema_type: "food_registration", files: many(2, "字".repeat(60_000)) })).status, 413);
+  }
 });
 
 // Needs the mock Ollama server (test/mock-ollama.mjs); skipped against a real deployment.
@@ -486,6 +494,20 @@ if (mockUrl) {
     assert.match(user.content, /<document filename="nda.txt">/);
     assert.ok((user.content.match(/審查門檻：/g) ?? []).length > 100);
     assert.match(user.content, /"completeness_score"/);
+  });
+
+  await step("AI analysis of several documents together", async () => {
+    const r = await a("POST", "/api/ai/analyze", { schema_type: "new_drug_registration", files: [
+      { filename: "3.2.S.4.1 規格.txt", text: "原料藥規格" },
+      { filename: "1.2 仿單<草案>.txt", text: "仿單內容" },
+    ] });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.deepEqual(r.data.files, ["3.2.S.4.1 規格.txt", "1.2 仿單<草案>.txt"]);
+    assert.equal(r.data.filename, "3.2.S.4.1 規格.txt 等 2 份");
+    const user = (await (await fetch(`${mockUrl}/__last`)).json()).body.messages[1].content;
+    assert.match(user, /<document filename="3.2.S.4.1 規格.txt">\n原料藥規格\n<\/document>/);
+    assert.match(user, /<document filename="1.2 仿單&lt;草案&gt;.txt">/);
+    assert.match(user, /共 2 份文件，同屬一個申請案/);
   });
 }
 

@@ -9,7 +9,7 @@ import {
   clearSessionCookie, hashIterations, hashPassword, MAX_PBKDF2_ITERATIONS, MIN_PBKDF2_ITERATIONS, hashToken, newSessionToken, normalizeEmail,
   readSessionCookie, sessionCookie, slugify, validatePassword, verifyPassword,
 } from "./auth";
-import { AnalysisError, analyzeDocument, MAX_TEXT_CHARS, reviewItem, type AiConfig } from "./ai";
+import { AnalysisError, analyzeDocument, MAX_FILES, MAX_TEXT_CHARS, reviewItem, type AiConfig } from "./ai";
 import { actionItems, rtfVerdict, summarize, todayTaipei, type ItemRow, type ProjectRow } from "./report";
 import {
   ATTACHMENT_TYPES, DEFAULT_CASE_QUOTA_GB, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_ITEM, MAX_STORED_TEXT_CHARS,
@@ -1012,13 +1012,22 @@ async function analyze(request: Request, env: Env, user: AuthUser): Promise<Resp
   if (!cfg) throw new HttpError(503, "AI 分析尚未啟用：管理員需設定 OLLAMA_API_KEY。");
   const body = await readJson(request, MAX_AI_BYTES);
   if (!isSchemaType(body.schema_type)) throw new HttpError(400, "不支援的申請類型。");
-  const filename = str(body.filename, "檔案名稱", { max: 255 });
-  const text = typeof body.text === "string" ? body.text.trim() : "";
-  if (!text) throw new HttpError(400, "文件內容為空，無法分析。");
-  if (text.length > MAX_TEXT_CHARS) {
-    throw new HttpError(413, `文件文字超過 ${MAX_TEXT_CHARS.toLocaleString()} 字元，請拆分後分次分析。`);
+  // Either one document ({filename, text}) or several analysed together ({files: [...]}).
+  const raw: unknown[] = Array.isArray(body.files) ? body.files : [{ filename: body.filename, text: body.text }];
+  if (!raw.length) throw new HttpError(400, "請至少上傳一份文件。");
+  if (raw.length > MAX_FILES) throw new HttpError(400, `一次最多分析 ${MAX_FILES} 份文件。`);
+  const files = raw.map((f) => {
+    const o = (f && typeof f === "object" ? f : {}) as Record<string, unknown>;
+    const filename = str(o.filename, "檔案名稱", { max: 255 });
+    const text = typeof o.text === "string" ? o.text.trim() : "";
+    if (!text) throw new HttpError(400, `「${filename}」內容為空，無法分析。`);
+    return { filename, text };
+  });
+  const total = files.reduce((n, f) => n + f.text.length, 0);
+  if (total > MAX_TEXT_CHARS) {
+    throw new HttpError(413, `文件文字合計 ${total.toLocaleString()} 字元，超過單次分析上限 ${MAX_TEXT_CHARS.toLocaleString()} 字元，請減少文件或分次分析。`);
   }
-  const input = { filename, text };
+  const input = { files };
 
   try {
     return json(await analyzeDocument(cfg, body.schema_type, input));
