@@ -22,9 +22,10 @@ import { Crc32, ZipWriter } from "./zip.js";
  *   inns: string[], sequence: string, relatedSequences: string[], description: string,
  * }} Envelope
  * @typedef {{substance?: string, manufacturer?: string, product?: string, dosageForm?: string, productManufacturer?: string, indication?: string}} Product
- * @typedef {{key: string, node: string, title: string, filename: string, size: number,
- *   target?: {sequence: string, xml: "index"|"tw", id: string}}} Doc  target: the earlier leaf it replaces
- * @typedef {{key: string, node: string, title: string, target: {sequence: string, xml: "index"|"tw", id: string}}} Deletion
+ * @typedef {{key: string, node: string, title: string, filename: string, size: number, study?: string,
+ *   target?: {sequence: string, xml: "index"|"tw", id: string}}} Doc  target: the earlier leaf it replaces;
+ *   study: the node extension (study) it belongs to, in Module 4/5 study sections
+ * @typedef {{key: string, node: string, title: string, study?: string, target: {sequence: string, xml: "index"|"tw", id: string}}} Deletion
  */
 
 export const UNIT_TYPES = { initial: "首次送件", "validation-response": "驗證回復", response: "回復", "additional-info": "附加訊息", corrigendum: "更正", reformat: "格式轉換" };
@@ -83,6 +84,7 @@ export function planPaths(docs, product, appNo = "0000000000", sequence = "0000"
   for (const d of docs) byNode.set(d.node, [...(byNode.get(d.node) ?? []), d]);
   const sFolder = slug(`${product.substance ?? ""}-${product.manufacturer ?? ""}`) || "substance-1-manufacturer-1";
   const pFolder = slug(product.product ?? "") || "product-1";
+  const iFolder = slug(product.indication ?? "", 30) || "indication-1";
 
   for (const d of docs) {
     const spec = NODE.get(d.node);
@@ -90,7 +92,8 @@ export function planPaths(docs, product, appNo = "0000000000", sequence = "0000"
     const ext = (d.filename.includes(".") ? d.filename.split(".").pop() : "").toLowerCase();
     const allowed = spec.module === 1 ? ["pdf", "xml", "jpg", "jpeg", "png", "svg", "gif"] : ["pdf", "jpg", "jpeg", "png", "svg", "gif"];
     if (!allowed.includes(ext)) { problems.push({ key: d.key, message: `「${d.filename}」是 .${ext || "?"}，eCTD 不接受此格式。請先轉成 PDF。` }); continue; }
-    const folder = spec.module === 1 ? spec.dir : ichFolder(d.node, sFolder, pFolder);
+    const study = studyOf(d);
+    let folder = spec.module === 1 ? spec.dir : ichFolder(d.node, sFolder, pFolder, iFolder);
     const siblings = byNode.get(d.node);
     const n = siblings.indexOf(d) + 1;
     let stem;
@@ -99,6 +102,17 @@ export function planPaths(docs, product, appNo = "0000000000", sequence = "0000"
       const room = MAX_NAME - spec.prefix.length - ext.length - 2;
       const v = slug(d.filename.replace(/\.[^.]+$/, ""), Math.min(room, 30)) || String(n);
       stem = `${spec.prefix}-${v}`;
+    } else if (spec.study) {
+      // Study reports: named after the file, inside the study's folder (M5) or prefixed with
+      // the study (M4, where every study shares the section folder).
+      const s = study ? slug(study, 30) || `study-${studyNumber(d, docs)}` : "";
+      if (s && spec.study === "folder") folder = `${folder}/${s}`;
+      // The section number and study are already in the path; keep the rest of the file name.
+      let own = slug(d.filename.replace(/\.[^.]+$/, "").replace(LEADING_NODE, ""), 40);
+      if (s && own.startsWith(`${s}-`)) own = own.slice(s.length + 1);
+      if (own === s) own = "";
+      stem = [spec.study === "prefix" ? s : "", own || spec.base].filter(Boolean).join("-")
+        .slice(0, MAX_NAME - ext.length - 1).replace(/-+$/, "");
     } else {
       stem = siblings.length > 1 ? `${spec.base}-${n}` : spec.base;
     }
@@ -114,10 +128,24 @@ export function planPaths(docs, product, appNo = "0000000000", sequence = "0000"
   return { placed, problems };
 }
 
-function ichFolder(node, sFolder, pFolder) {
+function ichFolder(node, sFolder, pFolder, iFolder) {
   const chain = [];
   for (let n = node; n; n = parentNode(n)) chain.unshift(NODE.get(n));
-  return chain.filter((s) => s?.dir).map((s) => s.dir.replace("@s", sFolder).replace("@p", pFolder)).join("/");
+  return chain.filter((s) => s?.dir).map((s) => s.dir.replace("@s", sFolder).replace("@p", pFolder).replace("@i", iFolder)).join("/");
+}
+
+// "5.3.5.1_", "m4.2.3.2 ", "12_" at the start of a file name.
+const LEADING_NODE = /^(?:\d+[_\s-]+)?m?[1-5](?:[._-](?:\d{1,2}|[spar])(?![a-z]))*[_\s-]+/i;
+
+/** The study (node extension) a document is grouped under; only in Module 4/5 study sections. */
+export function studyOf(d) {
+  return NODE.get(d.node)?.study ? String(d.study ?? "").trim() : "";
+}
+
+/** 1-based number of a study among the studies of its section, for studies whose title has no usable letters. */
+function studyNumber(d, docs) {
+  const titles = [...new Set(docs.filter((x) => x.node === d.node && studyOf(x)).map(studyOf))];
+  return titles.indexOf(studyOf(d)) + 1;
 }
 
 /** Leaf ID: unique within the application because it carries the sequence number. */
@@ -179,13 +207,22 @@ export function twRegionalXml(env, m1Docs) {
  * Writes the headings that have documents, nested and in DTD order.
  * @param {object[]} specs  section table (DTD order)
  */
-function sectionXml(specs, rootElement, docs, indent, leafFor, attrsOf = () => "") {
+function sectionXml(specs, rootElement, docs, indent, leafFor, attrsOf = () => "", extIdOf = () => "") {
   const has = new Set();
   for (const d of docs) for (let n = d.node; n; n = parentNode(n)) has.add(n);
   const children = (parent) => specs.filter((s) => has.has(s.node) && parentNode(s.node) === parent);
   const render = (spec, pad) => {
     let out = `${pad}<${spec.element}${attrsOf(spec)}>\n`;
-    for (const d of docs.filter((x) => x.node === spec.node)) out += leafXml(`${pad}  `, leafFor(d));
+    const here = docs.filter((x) => x.node === spec.node);
+    for (const d of here.filter((x) => !studyOf(x))) out += leafXml(`${pad}  `, leafFor(d));
+    // One node extension per study, titled with the study (TFDA: Module 4/5 reports use node
+    // extensions; rule L.1: every node extension has a title).
+    const studies = [...new Set(here.map(studyOf).filter(Boolean))];
+    studies.forEach((study, i) => {
+      out += `${pad}  <node-extension ID="${extIdOf(spec.node, i + 1)}">\n${pad}    <title>${esc(study)}</title>\n`;
+      for (const d of here.filter((x) => studyOf(x) === study)) out += leafXml(`${pad}    `, leafFor(d));
+      out += `${pad}  </node-extension>\n`;
+    });
     for (const c of children(spec.node)) out += render(c, `${pad}  `);
     return `${out}${pad}</${spec.element}>\n`;
   };
@@ -196,13 +233,13 @@ function sectionXml(specs, rootElement, docs, indent, leafFor, attrsOf = () => "
   return tops.map((s) => render(s, indent)).join("");
 }
 
-/** index.xml: a leaf for tw-regional.xml in m1, then Modules 2 and 3. */
+/** index.xml: a leaf for tw-regional.xml in m1, then Modules 2–5. */
 export function indexXml(twRegionalMd5, ichDocs, product, sequence = "0000") {
   const a = (k, v) => (v && String(v).trim() ? ` ${k}="${esc(String(v).trim())}"` : "");
   const attrsOf = (spec) => {
     if (spec.node === "3.2.s" || spec.node === "2.3.s") return a("substance", product.substance || "substance-1") + a("manufacturer", product.manufacturer || "manufacturer-1");
     if (spec.node === "3.2.p" || spec.node === "2.3.p") return a("product-name", product.product) + a("dosageform", product.dosageForm) + a("manufacturer", product.productManufacturer);
-    if (spec.node === "2.7.3") return a("indication", product.indication || "indication-1");
+    if (spec.node === "2.7.3" || spec.node === "5.3.5") return a("indication", product.indication || "indication-1");
     return "";
   };
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE ectd:ectd SYSTEM "util/dtd/ich-ectd-3-2.dtd">\n` +
@@ -211,7 +248,8 @@ export function indexXml(twRegionalMd5, ichDocs, product, sequence = "0000") {
     `  <m1-administrative-information-and-prescribing-information>\n` +
     leafXml("    ", { id: leafIdFor(sequence, "tw-regional"), href: TW_REGIONAL_PATH, md5: twRegionalMd5, title: "TW Regional" }) +
     `  </m1-administrative-information-and-prescribing-information>\n` +
-    sectionXml(ICH_NODES, null, ichDocs, "  ", (d) => leafOf(d, sequence, (doc) => doc.path), attrsOf) +
+    sectionXml(ICH_NODES, null, ichDocs, "  ", (d) => leafOf(d, sequence, (doc) => doc.path), attrsOf,
+      (node, n) => leafIdFor(sequence, `x${node}-${n}`)) +
     `</ectd:ectd>\n`;
 }
 

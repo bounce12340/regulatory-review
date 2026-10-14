@@ -5,15 +5,13 @@ import { api, state, canEdit, fileSize } from "../lib/api.js";
 import { PLACEABLE, NODE } from "../lib/ectd-spec.js";
 import { itemNodes, nodesIn } from "../lib/ectd.js";
 import { RULES, zipEntries, folderEntries, validateEntries, loadBundledUtil, summarize, readManifests } from "../lib/ectd-validate.js";
-import { currentLeaves } from "../lib/ectd-lifecycle.js";
+import { currentLeaves, extensionTitle } from "../lib/ectd-lifecycle.js";
 import {
   planPaths, writePackage, envelopeProblems, newUuid, UNIT_TYPES, OBJECTIVES, TIERS,
 } from "../lib/ectd-build.js";
 
 const RULE = new Map(RULES.map((r) => [r.id, r]));
 const UTIL_URL = new URL("../vendor/ectd/", import.meta.url);
-// Module 4/5 need study-level node extensions; not packaged yet.
-const NOT_PACKAGED = new Set(["module4_nonclinical", "module5_clinical"]);
 const TIER2_FOR = { new_drug_registration: "new-drugs-application" };
 // What eCTD accepts as documents (TW M1 also takes XML; that is only used for tw-regional.xml).
 const PACKABLE = new Set(["pdf", "jpg", "jpeg", "png", "svg", "gif"]);
@@ -79,7 +77,7 @@ function defaults(detail) {
 function defaultNode(item, att) {
   if (att.ectd_node !== null && att.ectd_node !== undefined) return att.ectd_node;
   // Word/Excel originals usually sit next to their PDF; only the PDF goes in.
-  if (NOT_PACKAGED.has(item.category) || !PACKABLE.has(extOf(att.filename))) return "";
+  if (!PACKABLE.has(extOf(att.filename))) return "";
   for (const n of [...nodesIn(att.filename), ...itemNodes(item)]) {
     if (NODE.get(n)?.files) return n;
   }
@@ -113,7 +111,7 @@ function buildPanel(detail) {
   const submittedIn = (attId) => earlier().find((m) => m.leaves.some((l) => new RegExp(`^s\\d{4}-a${attId}$`).test(l.id)))?.sequence ?? null;
   const docs = detail.items.flatMap((item) => (item.attachments ?? []).map((a) => {
     const sent = submittedIn(a.id);
-    return { att: a, item, sent, node: sent ? "" : defaultNode(item, a), title: defaultTitle(a), target: lc.replace[a.id] ?? "" };
+    return { att: a, item, sent, node: sent ? "" : defaultNode(item, a), title: defaultTitle(a), study: a.ectd_study ?? "", target: lc.replace[a.id] ?? "" };
   }));
 
   const planBox = h("div", {});
@@ -169,13 +167,14 @@ function buildPanel(detail) {
       list(env, "inns", "主成分（INN）"),
       text(env, "identifier", "UUID", { max: 36, help: "同一申請案的所有序列須使用相同 UUID；第二次以後送件請沿用" }),
     ),
-    h("h3", { class: "sub-title" }, "Module 2／3 資料夾與屬性"),
+    h("h3", { class: "sub-title" }, "Module 2–5 資料夾與屬性"),
     h("div", { class: "form-grid" },
       text(product, "substance", "原料藥名稱（英文）", { help: "3.2.S 資料夾與 substance 屬性" }),
       text(product, "manufacturer", "原料藥製造廠（英文）"),
       text(product, "product", "藥品名稱（英文）", { help: "3.2.P 資料夾與 product-name 屬性" }),
       text(product, "dosageForm", "劑型（英文）"),
       text(product, "productManufacturer", "成品製造廠（英文）"),
+      text(product, "indication", "適應症（英文）", { help: "2.7.3 與 5.3.5 的 indication 屬性，也是 5.3.5 的資料夾名稱" }),
     ),
     editable ? h("div", { class: "btn-row" }, h("button", { type: "button", class: "btn", onclick: (e) => save(e.currentTarget) }, "儲存送件資訊")) : null,
   );
@@ -269,15 +268,16 @@ function buildPanel(detail) {
         h("div", { class: "table-wrap" }, h("table", { class: "ectd-table live-table" },
           h("thead", {}, h("tr", {}, ["節點", "標題", "來源序列", "刪除"].map((t) => h("th", {}, t)))),
           h("tbody", {}, live.map((l) => {
-            const supported = l.node && NODE.get(l.node)?.files && !l.extension;
+            const supported = l.node && NODE.get(l.node)?.files;
+            const study = extensionTitle(l);
             return h("tr", {},
               h("td", { class: "nowrap" }, l.node ?? "—"),
-              h("td", { class: "e-file" }, h("div", {}, l.title), h("div", { class: "item-sub" }, l.path ?? "")),
+              h("td", { class: "e-file" }, h("div", {}, l.title), study ? h("div", { class: "item-sub" }, `試驗：${study}`) : null, h("div", { class: "item-sub" }, l.path ?? "")),
               h("td", { class: "nowrap" }, l.sequence),
               h("td", {}, h("input", {
                 type: "checkbox", "aria-label": `刪除 ${l.title}`, checked: lc.deletes.includes(l.key),
                 disabled: !editable || !supported || replaced.has(l.key),
-                title: !supported ? "Module 4／5 或延伸節點的文件尚不支援" : replaced.has(l.key) ? "已選擇替換這份文件" : null,
+                title: !supported ? "這份文件的節點無法辨識" : replaced.has(l.key) ? "已選擇替換這份文件" : null,
                 onchange: (e) => {
                   lc.deletes = e.target.checked ? [...lc.deletes, l.key] : lc.deletes.filter((k) => k !== l.key);
                   refresh();
@@ -290,7 +290,7 @@ function buildPanel(detail) {
   // ── Document placement ──
   const nodeOptions = (current) => [
     h("option", { value: "" }, "（不放入 eCTD）"),
-    ...[1, 2, 3].map((m) => h("optgroup", { label: `Module ${m}` },
+    ...[1, 2, 3, 4, 5].map((m) => h("optgroup", { label: `Module ${m}` },
       PLACEABLE.filter((n) => n.module === m).map((n) => h("option", { value: n.node, selected: n.node === current }, `${n.node} ${n.title}`)))),
   ];
   const persist = async (d, patch) => {
@@ -298,13 +298,23 @@ function buildPanel(detail) {
       const res = await api("PATCH", `/api/attachments/${d.att.id}`, patch);
       d.att.ectd_node = res.ectd_node;
       d.att.ectd_title = res.ectd_title;
+      d.att.ectd_study = res.ectd_study;
     } catch (err) { toast(err.message, "error"); }
   };
+  const studyList = h("datalist", { id: "ectd-studies" });
   const docRows = docs.map((d) => {
     const pathCell = h("td", { class: "e-path" });
     d.pathCell = pathCell;
     d.opCell = h("td", { class: "e-op" });
     d.sentNote = h("div", { class: "item-sub" });
+    // Module 4/5 study reports: the study becomes a node extension titled with this text.
+    d.studyInput = h("input", {
+      class: "input e-study", value: d.study, maxlength: 200, disabled: !editable, list: "ectd-studies",
+      placeholder: "試驗名稱，例：EXA-301", "aria-label": `${d.att.filename} 的試驗名稱`,
+      oninput: (e) => { d.study = e.target.value; },
+      onchange: (e) => { d.study = e.target.value.trim(); e.target.value = d.study; persist(d, { ectd_study: d.study }); refresh(); },
+    });
+    d.studyBox = h("label", { class: "e-study-box" }, h("span", { class: "item-sub" }, "試驗（延伸節點標題）"), d.studyInput);
     return h("tr", {},
       h("td", { class: "e-file" }, h("div", { class: "item-name" }, d.att.filename),
         h("div", { class: "item-sub" }, `${d.item.item_name}・${fileSize(d.att.size_bytes)}`), d.sentNote),
@@ -312,8 +322,8 @@ function buildPanel(detail) {
         class: "input", disabled: !editable, "aria-label": `${d.att.filename} 的 CTD 節點`,
         onchange: (e) => { d.node = e.target.value; d.target = ""; delete lc.replace[d.att.id]; refresh(); persist(d, { ectd_node: d.node || "" }); },
       }, nodeOptions(d.node)),
-      NOT_PACKAGED.has(d.item.category) ? h("div", { class: "item-sub" }, "Module 4／5 尚未支援打包")
-        : !PACKABLE.has(extOf(d.att.filename)) ? h("div", { class: "item-sub" }, "eCTD 只收 PDF，請上傳轉好的 PDF 版") : null),
+      d.studyBox,
+      !PACKABLE.has(extOf(d.att.filename)) ? h("div", { class: "item-sub" }, "eCTD 只收 PDF，請上傳轉好的 PDF 版") : null),
       h("td", { class: "e-title" }, h("input", {
         class: "input", value: d.title, maxlength: 300, disabled: !editable, "aria-label": `${d.att.filename} 的標題`,
         oninput: (e) => { d.title = e.target.value; },
@@ -327,7 +337,9 @@ function buildPanel(detail) {
   const placement = h("section", { class: "sheet" },
     h("h2", { class: "sheet-title" }, "3. 文件配置", h("span", { class: "aside" }, `${docs.length} 個附件`)),
     h("p", { class: "help", style: "margin-top:-6px" },
-      "每個附件放在一個 CTD 節點，標題會成為 eCTD 中的頁面標題（leaf title）。系統先依檢查項目與檔名建議，可逐一修改；檔名會依 TFDA 附件一及 ICH Appendix 4 自動命名。Word／Excel 請先轉成 PDF 再上傳到檢查項目。"),
+      "每個附件放在一個 CTD 節點，標題會成為 eCTD 中的頁面標題（leaf title）。系統先依檢查項目與檔名建議，可逐一修改；檔名會依 TFDA 附件一及 ICH Appendix 4 自動命名。Word／Excel 請先轉成 PDF 再上傳到檢查項目。",
+      "Module 4／5 的試驗報告要填試驗名稱：同一試驗的文件填相同名稱，會放在同一個延伸節點（node extension）下；Module 5 每個試驗另有自己的資料夾。"),
+    studyList,
     docs.length ? h("div", { class: "table-wrap" }, h("table", { class: "ectd-table" },
       h("thead", {}, h("tr", {}, ["檔案", "CTD 節點", "標題（leaf title）", "操作", "eCTD 路徑"].map((t) => h("th", {}, t)))),
       h("tbody", {}, docRows)))
@@ -355,10 +367,10 @@ function buildPanel(detail) {
       const l = d.target && live.get(d.target);
       return l ? { sequence: l.sequence, xml: l.xml, id: l.id } : undefined;
     };
-    const plan = planPaths(chosen.map((d) => ({ key: String(d.att.id), node: d.node, title: d.title, filename: d.att.filename, size: d.att.size_bytes, att: d.att, target: targetOf(d) })),
+    const plan = planPaths(chosen.map((d) => ({ key: String(d.att.id), node: d.node, title: d.title, study: d.study, filename: d.att.filename, size: d.att.size_bytes, att: d.att, target: targetOf(d) })),
       product, name.appNo || "0000000000", env.sequence || "0000");
     const deletes = lc.deletes.map((k) => live.get(k)).filter(Boolean)
-      .map((l) => ({ key: `${l.sequence}-${l.id}`, node: l.node, title: l.title, target: { sequence: l.sequence, xml: l.xml, id: l.id } }));
+      .map((l) => ({ key: `${l.sequence}-${l.id}`, node: l.node, title: l.title, study: extensionTitle(l), target: { sequence: l.sequence, xml: l.xml, id: l.id } }));
     return { ...plan, deletes };
   }
 
@@ -391,7 +403,9 @@ function buildPanel(detail) {
       d.pathCell.replaceChildren(p?.path ?? h("span", { class: "muted" }, d.node ? "—" : "不放入"));
       d.sentNote.textContent = d.sent ? `已於序列 ${d.sent} 送出` : "";
       // Documents in the same section of earlier sequences can be replaced by this one.
-      const options = d.node ? [...live].filter(([k, l]) => l.node === d.node && !l.extension && !lc.deletes.includes(k) && (k === d.target || !taken.has(k))) : [];
+      const studySection = Boolean(NODE.get(d.node)?.study);
+      d.studyBox.hidden = !studySection;
+      const options = d.node ? [...live].filter(([k, l]) => l.node === d.node && !lc.deletes.includes(k) && (k === d.target || !taken.has(k))) : [];
       if (d.target && !options.some(([k]) => k === d.target)) { d.target = ""; delete lc.replace[d.att.id]; }
       d.opCell.replaceChildren(!d.node ? h("span", { class: "muted small" }, "—") : !options.length
         ? h("span", { class: "small" }, "新增")
@@ -400,15 +414,25 @@ function buildPanel(detail) {
           onchange: (e) => {
             d.target = e.target.value;
             if (d.target) lc.replace[d.att.id] = d.target; else delete lc.replace[d.att.id];
+            // A replacement belongs in the same study as the document it replaces (rule K.BP1).
+            const study = d.target ? extensionTitle(live.get(d.target)) : "";
+            if (study && study !== d.study) { d.study = study; d.studyInput.value = study; persist(d, { ectd_study: study }); }
             refresh();
             drawHistory();
           },
         }, h("option", { value: "" }, "新增"),
-        options.map(([k, l]) => h("option", { value: k, selected: k === d.target }, `替換：${l.title}（序列 ${l.sequence}）`))));
+        options.map(([k, l]) => {
+          const study = extensionTitle(l);
+          return h("option", { value: k, selected: k === d.target }, `替換：${study ? `${study}／` : ""}${l.title}（序列 ${l.sequence}）`);
+        })));
     }
+    studyList.replaceChildren(...[...new Set(docs.filter((d) => d.study && NODE.get(d.node)?.study).map((d) => d.study))].sort().map((v) => h("option", { value: v })));
     const envProblems = envelopeProblems(env);
+    // TFDA eCTD 指引：模組 4 及模組 5 使用 Node Extension 的方式提供相關報告.
+    const noStudy = placed.filter((p) => NODE.get(p.node)?.study && !p.study?.trim())
+      .map((p) => `「${p.title}」放在 ${p.node}，請填試驗名稱（Module 4／5 報告以延伸節點提供）。`);
     const missingForm = !placed.some((p) => p.node === "1.1.1");
-    const all = [...envProblems, ...historyProblems(), ...(missingForm ? ["1.1.1（申請書／公文／回覆函）必須至少放一個檔案（規則 O.11）。"] : []), ...problems.map((p) => p.message)];
+    const all = [...envProblems, ...historyProblems(), ...(missingForm ? ["1.1.1（申請書／公文／回覆函）必須至少放一個檔案（規則 O.11）。"] : []), ...problems.map((p) => p.message), ...noStudy];
     const replacing = placed.filter((p) => p.target).length;
     planBox.replaceChildren(h("p", { class: "small", style: "margin-top:10px" },
       `放入 eCTD：${placed.length} 個檔案，${fileSize(placed.reduce((n, p) => n + p.size, 0))}` +

@@ -97,6 +97,13 @@ export function parseModifiedFile(value, xml) {
 
 export const leafKey = (sequence, xml, id) => `${sequence}:${xml}:${id}`;
 
+/** Title of the node extension (study) a leaf sits in, from its section path; "" when none. */
+export function extensionTitle(leaf) {
+  const s = leaf.section ?? "";
+  const i = s.lastIndexOf("node-extension[");
+  return i < 0 || !s.endsWith("]") ? "" : s.slice(i + "node-extension[".length, -1);
+}
+
 /**
  * Current documents after applying every manifest in sequence order.
  * @param {{sequence: string, leaves: object[]}[]} history

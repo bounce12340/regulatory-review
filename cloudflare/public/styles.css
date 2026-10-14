@@ -607,6 +607,9 @@ details.disclose[open] > summary { margin-bottom: 14px; }
 .ectd-table .e-path { font-size: var(--t-xs); color: var(--ink-2); overflow-wrap: anywhere; min-width: 16em; max-width: 30em; }
 .ectd-report .rtf-verdict { margin-bottom: 14px; }
 .ectd-table .e-op { min-width: 11em; }
+.e-study-box { display: grid; gap: 2px; margin-top: 6px; }
+.e-study-box[hidden] { display: none; }
+.ectd-table .e-study { font-size: var(--t-xs); padding: 5px 6px; }
 .ectd-table .e-op select { font-size: var(--t-xs); padding: 5px 6px; }
 .seq-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 6px; font-size: var(--t-sm); }
 .seq-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 6px 0; border-bottom: 1px solid var(--rule-soft); }
