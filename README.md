@@ -65,6 +65,22 @@ cp .env.example .env
 streamlit run launcher.py
 ```
 
+### 🔭 Future AGI 追蹤（選用）
+
+設定後，每次 AI 缺口分析都會在 [Future AGI](https://github.com/future-agi/future-agi) 記錄一筆 LLM 追蹤（模型、token 數、耗時、成功或失敗），可用來觀察與評估分析品質。未設定時完全不會啟用。
+
+```bash
+pip install -r requirements.txt -r requirements-tracing.txt
+export FI_API_KEY=...          # Future AGI 的 API key
+export FI_SECRET_KEY=...
+export FI_PROJECT_NAME=regulatory-review   # 選填，預設即為此名稱
+# 選填：不上傳申請文件內容與模型回應，只送模型、token 與耗時
+export FI_HIDE_INPUTS=true
+export FI_HIDE_OUTPUTS=true
+```
+
+⚠️ 預設會上傳完整 prompt，其中包含使用者上傳的申請文件內容。處理機密文件時請設定 `FI_HIDE_INPUTS` / `FI_HIDE_OUTPUTS`。實作見 `ai/tracing.py`。
+
 ### 🛠️ 技術棧
 
 - **前端**: Streamlit
@@ -122,6 +138,22 @@ cp .env.example .env
 # Launch web interface
 streamlit run launcher.py
 ```
+
+### 🔭 Future AGI tracing (optional)
+
+When configured, every AI gap analysis is recorded as an LLM trace in [Future AGI](https://github.com/future-agi/future-agi) (model, tokens, latency, success or failure), so you can monitor and evaluate the analysis quality. Nothing is enabled unless the keys are set.
+
+```bash
+pip install -r requirements.txt -r requirements-tracing.txt
+export FI_API_KEY=...          # Future AGI API key
+export FI_SECRET_KEY=...
+export FI_PROJECT_NAME=regulatory-review   # optional, this is the default
+# Optional: send only model, tokens and timing, not the document or the response
+export FI_HIDE_INPUTS=true
+export FI_HIDE_OUTPUTS=true
+```
+
+⚠️ By default the full prompt is sent, and it contains the uploaded application document. Set `FI_HIDE_INPUTS` / `FI_HIDE_OUTPUTS` for confidential documents. See `ai/tracing.py`.
 
 ### 🛠️ Tech Stack
 

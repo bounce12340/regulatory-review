@@ -1,7 +1,9 @@
 // AI document gap analysis: upload → (browser) extract text → Worker → Ollama.
-import { h, mount, download, busy, field } from "../lib/dom.js";
+import { h, mount, download, busy, field, toast } from "../lib/dom.js";
 import { api, state, canEdit, groupSchemas, RISK_LABEL } from "../lib/api.js";
-import { ACCEPT, prepareDocument } from "../lib/docparse.js";
+import { ACCEPT, MAX_TEXT_CHARS, prepareDocument } from "../lib/docparse.js";
+
+const MAX_FILES = 20; // keep in step with MAX_FILES in src/ai.ts
 
 const GAP_STATUS = { missing: "缺少", incomplete: "不完整", non_compliant: "不符合" };
 const SEV_ORDER = ["high", "medium", "low"];
@@ -15,7 +17,7 @@ export async function renderAi(main, _params, ctx) {
 
   const header = h("header", { class: "page-head" },
     h("h1", {}, "AI 文件分析"),
-    h("p", {}, "上傳申請文件，AI 會依所選申請類型的 TFDA 文件清單逐項比對，列出缺少或不完整的地方。"));
+    h("p", {}, "上傳一份或多份申請文件，AI 會依所選申請類型的 TFDA 文件清單逐項比對，列出缺少或不完整的地方。"));
 
   if (!state.config.ai_enabled) {
     mount(main, header, h("div", { class: "notice warn" },
@@ -28,29 +30,55 @@ export async function renderAi(main, _params, ctx) {
     return;
   }
 
-  let file = null;
+  // Picked documents, extracted to text as soon as they are added so problems show up early.
+  // Each: {file, text, error} — text is null while extracting.
+  const docs = [];
+  let running = false;
   const results = h("div", {});
-  const fileLine = h("div", { class: "file" }, "尚未選擇檔案");
-  const input = h("input", { type: "file", accept: ACCEPT, class: "sr-only", id: "ai-file", onchange: (e) => pick(e.target.files[0]) });
+  const fileList = h("ul", { class: "file-list" });
+  const totalLine = h("p", { class: "small file-total", "aria-live": "polite" });
+  const input = h("input", { type: "file", accept: ACCEPT, multiple: true, class: "sr-only", id: "ai-file",
+    onchange: (e) => { add(e.target.files); e.target.value = ""; } }); // reset so the same file can be picked again
   const analyzeBtn = h("button", { class: "btn btn-primary btn-block", disabled: true, onclick: () => run() }, "開始分析");
   const schemaSelect = h("select", { class: "input" }, groupSchemas(state.schemas).map((g) =>
     h("optgroup", { label: g.label }, g.items.map((s) => h("option", { value: s.key }, s.name_zh)))));
 
-  function pick(f) {
-    if (!f) return;
-    file = f;
-    fileLine.replaceChildren(h("b", {}, f.name), `（${Math.max(1, Math.round(f.size / 1024))} KB）`,
-      // preventDefault keeps the click from also opening the file picker of the surrounding label.
-      h("button", { type: "button", class: "btn btn-sm btn-danger file-remove", "aria-label": `移除 ${f.name}`,
-        onclick: (e) => { e.preventDefault(); e.stopPropagation(); clearFile(); } }, "移除"));
-    analyzeBtn.disabled = false;
+  function add(list) {
+    for (const f of list) {
+      if (docs.some((d) => d.file.name === f.name && d.file.size === f.size)) continue;
+      if (docs.length >= MAX_FILES) { toast(`一次最多分析 ${MAX_FILES} 份文件。`, "error"); break; }
+      const d = { file: f, text: null, error: null };
+      docs.push(d);
+      prepareDocument(f).then((r) => { d.text = r.text; }, (err) => { d.error = err.message; }).finally(render);
+    }
+    render();
   }
 
-  function clearFile() {
-    file = null;
-    input.value = "";  // so picking the same file again still fires "change"
-    fileLine.replaceChildren("尚未選擇檔案");
-    analyzeBtn.disabled = true;
+  function remove(d) {
+    docs.splice(docs.indexOf(d), 1);
+    render();
+  }
+
+  const ready = () => docs.filter((d) => d.text);
+  const totalChars = () => ready().reduce((n, d) => n + d.text.length, 0);
+
+  function render() {
+    fileList.replaceChildren(...docs.map((d) => h("li", { class: d.error ? "bad" : null },
+      h("b", {}, d.file.name),
+      h("span", { class: "muted" }, d.error ? null : d.text === null ? "讀取中…" : `${d.text.length.toLocaleString()} 字`),
+      // preventDefault keeps the click from also opening the file picker of the surrounding label.
+      h("button", { type: "button", class: "btn btn-sm btn-danger file-remove", "aria-label": `移除 ${d.file.name}`,
+        onclick: (e) => { e.preventDefault(); e.stopPropagation(); remove(d); } }, "移除"),
+      d.error ? h("span", { class: "error-text" }, d.error) : null)));
+    const total = totalChars();
+    const over = total > MAX_TEXT_CHARS;
+    const pending = docs.some((d) => d.text === null && !d.error);
+    totalLine.className = `small file-total${over ? " error-text" : ""}`;
+    totalLine.textContent = !docs.length ? "尚未選擇檔案"
+      : `${ready().length} 份可分析，合計 ${total.toLocaleString()}／${MAX_TEXT_CHARS.toLocaleString()} 字` +
+        (over ? "，超過單次上限，請移除部分文件或分次分析。" : "") +
+        (docs.some((d) => d.error) ? "；無法讀取的檔案不會送出。" : "");
+    analyzeBtn.disabled = running || pending || over || !ready().length;
   }
 
   function clearResult() {
@@ -62,49 +90,54 @@ export async function renderAi(main, _params, ctx) {
     class: "dropzone", for: "ai-file",
     ondragover: (e) => { e.preventDefault(); drop.classList.add("drag"); },
     ondragleave: () => drop.classList.remove("drag"),
-    ondrop: (e) => { e.preventDefault(); drop.classList.remove("drag"); pick(e.dataTransfer.files[0]); },
+    ondrop: (e) => { e.preventDefault(); drop.classList.remove("drag"); add(e.dataTransfer.files); },
   },
     h("strong", {}, h("span", { class: "hover-only" }, "選擇或拖曳文件到這裡"), h("span", { class: "touch-only" }, "點這裡選擇文件")),
-    h("div", { class: "small" }, "含文字的 PDF、Word .docx、Excel .xlsx、純文字，20 MB 以內（掃描檔請先做 OCR）"),
-    fileLine,
+    h("div", { class: "small" }, `可一次選多份，合併為同一個申請案分析。含文字的 PDF、Word .docx、Excel .xlsx、純文字，每份 20 MB 以內，最多 ${MAX_FILES} 份（掃描檔請先做 OCR）`),
   );
 
   async function run() {
-    if (!file) return;
+    const files = ready().map((d) => ({ filename: d.file.name, text: d.text }));
+    if (!files.length) return;
     results.replaceChildren();
+    running = true;
     try {
       await busy(analyzeBtn, async () => {
-        const doc = await prepareDocument(file);
-        lastResult = await api("POST", "/api/ai/analyze", { schema_type: schemaSelect.value, filename: file.name, text: doc.text });
+        lastResult = await api("POST", "/api/ai/analyze", { schema_type: schemaSelect.value, files });
       }, "分析中，約需 30 秒到 2 分鐘");
       mount(results, report(lastResult, clearResult));
       results.querySelector("h2")?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
     } catch (err) {
       mount(results, h("div", { class: "notice error", role: "alert" }, `無法完成分析：${err.message}`));
+    } finally {
+      running = false;
+      render(); // busy() re-enables the button; put back the real state
     }
   }
 
   mount(main, header,
     h("section", { class: "sheet" },
       h("div", { class: "intake" },
-        h("div", {}, drop, input),
+        h("div", {}, drop, input, fileList, totalLine),
         h("div", {},
           field("申請類型", schemaSelect, "AI 會用這個類型的文件清單逐項比對"),
           analyzeBtn,
           h("p", { class: "help", style: "margin-top:12px" },
             `使用模型 ${state.config.ai_model}。文件會先在你的瀏覽器轉成文字，再傳送到 Ollama 雲端分析，請勿上傳未經授權的機密資料。`),
+          h("p", { class: "help" }, "整份申請資料超過上限時，可在案件頁用「批次上傳」放入各檢查項目，再執行「AI 全案審查」逐項審查。"),
         ),
       ),
     ),
     results,
   );
+  render();
   if (lastResult) mount(results, report(lastResult, clearResult));
 }
 
 function report(r, onClear) {
   const gaps = [...r.gaps].sort((a, b) => SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity));
   const high = gaps.filter((g) => g.severity === "high").length;
-  const base = r.filename.replace(/\.[^.]+$/, "");
+  const base = (r.files?.length > 1 ? `${r.files[0].replace(/\.[^.]+$/, "")}-${r.files.length}files` : r.filename.replace(/\.[^.]+$/, ""));
 
   return h("div", {},
     h("section", { class: "sheet" },
@@ -116,6 +149,7 @@ function report(r, onClear) {
         h("div", {}, h("dt", {}, "已符合"), h("dd", {}, r.compliant_items.length, h("small", {}, "項"))),
         h("div", {}, h("dt", {}, "預估審查時間"), h("dd", {}, r.estimated_review_time)),
       ),
+      r.files?.length > 1 ? h("p", { class: "small" }, h("b", {}, `分析文件（${r.files.length} 份）：`), r.files.join("、")) : null,
       h("p", { style: "max-width:72ch" }, r.summary),
       h("p", { class: "help" },
         `模型 ${r.model}，輸入 ${r.token_usage.input_tokens.toLocaleString()} tokens、輸出 ${r.token_usage.output_tokens.toLocaleString()} tokens。`),
@@ -156,7 +190,7 @@ function toMarkdown(r) {
   const lines = [
     "# TFDA 文件缺口分析報告",
     "",
-    `- **文件：** ${r.filename}`,
+    r.files?.length > 1 ? `- **文件（${r.files.length} 份）：** ${r.files.join("、")}` : `- **文件：** ${r.filename}`,
     `- **申請類型：** ${r.schema_type_zh}`,
     `- **完整度：** ${r.completeness_score}/100`,
     `- **整體風險：** ${RISK_LABEL[r.risk_assessment] ?? r.risk_assessment}`,

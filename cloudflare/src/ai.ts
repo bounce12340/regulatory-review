@@ -76,7 +76,9 @@ export interface GapItem {
 }
 
 export interface GapReport {
+  /** Display name: the file name, or "a.pdf 等 3 份" for several. */
   filename: string;
+  files: string[];
   schema_type: string;
   schema_type_zh: string;
   completeness_score: number;
@@ -90,10 +92,17 @@ export interface GapReport {
   token_usage: { input_tokens: number; output_tokens: number };
 }
 
-export interface AnalysisInput {
+export interface AnalysisFile {
   filename: string;
   text: string;
 }
+
+/** One or more documents analysed together as one application. */
+export interface AnalysisInput {
+  files: AnalysisFile[];
+}
+
+export const MAX_FILES = 20;
 
 export function formatRequirements(schema: Schema): string {
   return schema.items
@@ -119,22 +128,32 @@ export interface AiConfig {
 }
 
 type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
-type Report = Omit<GapReport, "filename" | "schema_type" | "schema_type_zh" | "model" | "token_usage">;
+type Report = Omit<GapReport, "filename" | "files" | "schema_type" | "schema_type_zh" | "model" | "token_usage">;
 
 export async function analyzeDocument(cfg: AiConfig, schemaType: string, input: AnalysisInput): Promise<GapReport> {
   const schema = SCHEMAS[schemaType];
+  const names = input.files.map((f) => f.filename);
+  const many = names.length > 1;
+  const subject = many ? "這些文件" : "本文件";
   const instructions =
-    `## 文件資訊\n- 檔案名稱：${input.filename}\n- 申請類型：${schema.display_name_zh}（${schemaType}）\n\n` +
+    `## 文件資訊\n` +
+    (many
+      ? `- 共 ${names.length} 份文件，同屬一個申請案，請合併視為一份申請資料判斷：\n${names.map((n) => `  - ${n}`).join("\n")}\n`
+      : `- 檔案名稱：${names[0]}\n`) +
+    `- 申請類型：${schema.display_name_zh}（${schemaType}）\n\n` +
     `## 文件要求清單\n${formatRequirements(schema)}\n\n` +
     (schema.rtf_rules?.length
       ? `## 退件判定原則（TFDA RTF 查檢表）\n${schema.rtf_rules.map((r) => `- ${r.rule}（項目：${r.items.join("、")}）`).join("\n")}\n` +
-        `清單順序即查檢表題號。請在 summary 說明依上述原則，本文件目前會被判定退件或續審，以及原因。\n\n`
+        `清單順序即查檢表題號。請在 summary 說明依上述原則，${subject}目前會被判定退件或續審，以及原因。\n\n`
       : "") +
-    `請依上述清單逐項分析附上的文件，產出缺口分析報告。gaps 只列出未完全符合的項目；完全符合者列入 compliant_items。\n\n` +
+    `請依上述清單逐項分析附上的${subject}，產出缺口分析報告。` +
+    (many ? "某項要求只要在任一份文件中符合即視為符合；explanation 請註明依據或缺漏所在的檔案名稱。" : "") +
+    `gaps 只列出未完全符合的項目；完全符合者列入 compliant_items。\n\n` +
     `## 輸出格式\n只輸出一個符合下列 JSON Schema 的 JSON 物件：\n${JSON.stringify(GAP_REPORT_SCHEMA)}`;
+  const documents = input.files.map((f) => `<document filename="${escapeAttr(f.filename)}">\n${f.text}\n</document>`).join("\n\n");
   const messages: ChatMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
-    { role: "user", content: `<document filename="${escapeAttr(input.filename)}">\n${input.text}\n</document>\n\n${instructions}` },
+    { role: "user", content: `${documents}\n\n${instructions}` },
   ];
 
   let reply = await chat(cfg, messages);
@@ -151,7 +170,8 @@ export async function analyzeDocument(cfg: AiConfig, schemaType: string, input: 
   if (!report) throw new AnalysisError("AI 回應格式無法解析，請重試或改用其他模型。");
 
   return {
-    filename: input.filename,
+    filename: many ? `${names[0]} 等 ${names.length} 份` : names[0],
+    files: names,
     schema_type: schemaType,
     schema_type_zh: schema.display_name_zh,
     ...report,
