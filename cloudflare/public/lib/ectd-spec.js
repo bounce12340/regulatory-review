@@ -1,8 +1,8 @@
 // eCTD structure for TFDA submissions: where each CTD section lives in the backbone XML
 // and in the folder tree, and the fixed util files. Sources:
 // - TW Module 1: TFDA「藥品查驗登記電子通用技術文件指引」eCTD-R2.1 (114.06.30), 附件一 and
-//   tw-regional.dtd (TW DTD 2.0).
-// - Modules 2–3: ICH eCTD Specification V3.2.2, Appendix 4 (folder and file names) and
+//   tw-regional.dtd (TW DTD 2.0); Modules 4–5 section titles from 表十一、表十二.
+// - Modules 2–5: ICH eCTD Specification V3.2.2, Appendix 4 (folder and file names) and
 //   ich-ectd-3-2.dtd (element names and order).
 // - Validation rules: TFDA「藥品查驗登記電子通用技術文件驗證指引」eCTD-V-R2.1 (114.06.30).
 
@@ -88,9 +88,11 @@ export const TW_M1 = [
 }));
 
 /**
- * ICH Modules 2 and 3. dir is relative to the parent's folder (null: documents sit in the
- * parent's folder); "@s" / "@p" stand for the substance / product folder; base is the
- * recommended file name stem.
+ * ICH Modules 2–5. dir is relative to the parent's folder (null: documents sit in the
+ * parent's folder); "@s" / "@p" / "@i" stand for the substance / product / indication folder;
+ * base is the recommended file name stem. study marks sections whose documents are grouped
+ * by study in node extensions: "prefix" (files named after the study, in the section folder)
+ * or "folder" (one folder per study).
  */
 const ICH = [
   ["2", "m2-common-technical-document-summaries", "m2", null, "通用技術文件摘要", false],
@@ -183,7 +185,82 @@ const ICH = [
   ["3.2.a.3", "m3-2-a-3-excipients", "32a3-excip", "excipients", "賦形劑"],
   ["3.2.r", "m3-2-r-regional-information", "32r-reg-info", "regional-information", "區域性資料"],
   ["3.3", "m3-3-literature-references", "33-lit-ref", "reference", "參考文獻"],
-].map(([node, element, dir, base, title, files = true]) => ({ node, element, dir, base, title, files, module: Number(node[0]) }));
+
+  // Modules 4 and 5 (TFDA 表十一／表十二; ICH Appendix 4). Study sections hold one node
+  // extension per study ("模組 4 及模組 5 使用 Node Extension 的方式提供相關報告"): in M4 a
+  // study's files sit in the section folder; in M5 each study has its own folder.
+  ["4", "m4-nonclinical-study-reports", "m4", null, "非臨床試驗報告", false],
+  ["4.2", "m4-2-study-reports", "42-stud-rep", null, "試驗報告", false],
+  ["4.2.1", "m4-2-1-pharmacology", "421-pharmacol", null, "藥理學", false],
+  ["4.2.1.1", "m4-2-1-1-primary-pharmacodynamics", "4211-prim-pd", "study-report", "主要藥效學", true, "prefix"],
+  ["4.2.1.2", "m4-2-1-2-secondary-pharmacodynamics", "4212-sec-pd", "study-report", "次要藥效學", true, "prefix"],
+  ["4.2.1.3", "m4-2-1-3-safety-pharmacology", "4213-safety-pharmacol", "study-report", "安全藥理學", true, "prefix"],
+  ["4.2.1.4", "m4-2-1-4-pharmacodynamic-drug-interactions", "4214-pd-drug-interact", "study-report", "藥效部分之藥品交互作用", true, "prefix"],
+  ["4.2.2", "m4-2-2-pharmacokinetics", "422-pk", null, "藥動學", false],
+  ["4.2.2.1", "m4-2-2-1-analytical-methods-and-validation-reports", "4221-analyt-met-val", "study-report", "分析方法及其確效資料", true, "prefix"],
+  ["4.2.2.2", "m4-2-2-2-absorption", "4222-absorp", "study-report", "吸收", true, "prefix"],
+  ["4.2.2.3", "m4-2-2-3-distribution", "4223-distrib", "study-report", "分佈", true, "prefix"],
+  ["4.2.2.4", "m4-2-2-4-metabolism", "4224-metab", "study-report", "代謝", true, "prefix"],
+  ["4.2.2.5", "m4-2-2-5-excretion", "4225-excr", "study-report", "排泄", true, "prefix"],
+  ["4.2.2.6", "m4-2-2-6-pharmacokinetic-drug-interactions", "4226-pk-drug-interact", "study-report", "藥動部分之藥品交互作用", true, "prefix"],
+  ["4.2.2.7", "m4-2-2-7-other-pharmacokinetic-studies", "4227-other-pk-stud", "study-report", "其他藥動試驗", true, "prefix"],
+  ["4.2.3", "m4-2-3-toxicology", "423-tox", null, "毒理學", false],
+  ["4.2.3.1", "m4-2-3-1-single-dose-toxicity", "4231-single-dose-tox", "study-report", "單一劑量毒性", true, "prefix"],
+  ["4.2.3.2", "m4-2-3-2-repeat-dose-toxicity", "4232-repeat-dose-tox", "study-report", "重覆劑量毒性", true, "prefix"],
+  ["4.2.3.3", "m4-2-3-3-genotoxicity", "4233-genotox", null, "基因毒性", false],
+  ["4.2.3.3.1", "m4-2-3-3-1-in-vitro", "42331-in-vitro", "study-report", "基因毒性：活體外", true, "prefix"],
+  ["4.2.3.3.2", "m4-2-3-3-2-in-vivo", "42332-in-vivo", "study-report", "基因毒性：活體內", true, "prefix"],
+  ["4.2.3.4", "m4-2-3-4-carcinogenicity", "4234-carcigen", null, "致癌性", false],
+  ["4.2.3.4.1", "m4-2-3-4-1-long-term-studies", "42341-lt-stud", "study-report", "致癌性：長期試驗", true, "prefix"],
+  ["4.2.3.4.2", "m4-2-3-4-2-short-or-medium-term-studies", "42342-smt-stud", "study-report", "致癌性：短期或中期試驗", true, "prefix"],
+  ["4.2.3.4.3", "m4-2-3-4-3-other-studies", "42343-other-stud", "study-report", "致癌性：其他試驗", true, "prefix"],
+  ["4.2.3.5", "m4-2-3-5-reproductive-and-developmental-toxicity", "4235-repro-dev-tox", null, "生殖與發育毒性", false],
+  ["4.2.3.5.1", "m4-2-3-5-1-fertility-and-early-embryonic-development", "42351-fert-embryo-dev", "study-report", "生育力與早期胚胎發育", true, "prefix"],
+  ["4.2.3.5.2", "m4-2-3-5-2-embryo-fetal-development", "42352-embryo-fetal-dev", "study-report", "胚胎－胎兒發育", true, "prefix"],
+  ["4.2.3.5.3", "m4-2-3-5-3-prenatal-and-postnatal-development-including-maternal-function", "42353-pre-postnatal-dev", "study-report", "產前及產後之幼胎發育，包含母體功能", true, "prefix"],
+  ["4.2.3.5.4", "m4-2-3-5-4-studies-in-which-the-offspring-juvenile-animals-are-dosed-and-or-further-evaluated", "42354-juv", "study-report", "子代（年少動物）給藥後及／或後續評估研究", true, "prefix"],
+  ["4.2.3.6", "m4-2-3-6-local-tolerance", "4236-loc-tol", "study-report", "局部耐受性", true, "prefix"],
+  ["4.2.3.7", "m4-2-3-7-other-toxicity-studies", "4237-other-tox-stud", null, "其他毒性試驗", false],
+  ["4.2.3.7.1", "m4-2-3-7-1-antigenicity", "42371-antigen", "study-report", "抗原性", true, "prefix"],
+  ["4.2.3.7.2", "m4-2-3-7-2-immunotoxicity", "42372-immunotox", "study-report", "免疫毒性", true, "prefix"],
+  ["4.2.3.7.3", "m4-2-3-7-3-mechanistic-studies", "42373-mechan-stud", "study-report", "機轉性研究", true, "prefix"],
+  ["4.2.3.7.4", "m4-2-3-7-4-dependence", "42374-dep", "study-report", "依賴性", true, "prefix"],
+  ["4.2.3.7.5", "m4-2-3-7-5-metabolites", "42375-metab", "study-report", "代謝物", true, "prefix"],
+  ["4.2.3.7.6", "m4-2-3-7-6-impurities", "42376-imp", "study-report", "不純物", true, "prefix"],
+  ["4.2.3.7.7", "m4-2-3-7-7-other", "42377-other", "study-report", "其他毒性", true, "prefix"],
+  ["4.3", "m4-3-literature-references", "43-lit-ref", "reference", "參考文獻"],
+
+  ["5", "m5-clinical-study-reports", "m5", null, "臨床試驗報告", false],
+  ["5.2", "m5-2-tabular-listing-of-all-clinical-studies", "52-tab-list", "tabular-listing", "所有臨床研究的表格清單"],
+  ["5.3", "m5-3-clinical-study-reports", "53-clin-stud-rep", null, "臨床試驗報告", false],
+  ["5.3.1", "m5-3-1-reports-of-biopharmaceutic-studies", "531-rep-biopharm-stud", null, "生物藥劑試驗報告", false],
+  ["5.3.1.1", "m5-3-1-1-bioavailability-study-reports", "5311-ba-stud-rep", "study-report", "生體可用率（BA）試驗報告", true, "folder"],
+  ["5.3.1.2", "m5-3-1-2-comparative-ba-and-bioequivalence-study-reports", "5312-compar-ba-be-stud-rep", "study-report", "相對生體可用率及生體相等性（BE）試驗報告", true, "folder"],
+  ["5.3.1.3", "m5-3-1-3-in-vitro-in-vivo-correlation-study-reports", "5313-in-vitro-in-vivo-corr-stud-rep", "study-report", "藥品體外與體內相關性試驗報告", true, "folder"],
+  ["5.3.1.4", "m5-3-1-4-reports-of-bioanalytical-and-analytical-methods-for-human-studies", "5314-bioanalyt-analyt-met", "study-report", "人體試驗之生物檢體分析及分析方法報告", true, "folder"],
+  ["5.3.2", "m5-3-2-reports-of-studies-pertinent-to-pharmacokinetics-using-human-biomaterials", "532-rep-stud-pk-human-biomat", null, "使用人體生物檢體之藥動試驗報告", false],
+  ["5.3.2.1", "m5-3-2-1-plasma-protein-binding-study-reports", "5321-plasma-prot-bind-stud-rep", "study-report", "血漿蛋白結合試驗報告", true, "folder"],
+  ["5.3.2.2", "m5-3-2-2-reports-of-hepatic-metabolism-and-drug-interaction-studies", "5322-rep-hep-metab-interact-stud", "study-report", "肝臟代謝及藥品交互作用試驗報告", true, "folder"],
+  ["5.3.2.3", "m5-3-2-3-reports-of-studies-using-other-human-biomaterials", "5323-stud-other-human-biomat", "study-report", "其他人體生物檢體之試驗報告", true, "folder"],
+  ["5.3.3", "m5-3-3-reports-of-human-pharmacokinetics-pk-studies", "533-rep-human-pk-stud", null, "人體藥動學試驗報告", false],
+  ["5.3.3.1", "m5-3-3-1-healthy-subject-pk-and-initial-tolerability-study-reports", "5331-healthy-subj-pk-init-tol-stud-rep", "study-report", "健康受試者藥動及起始耐受性試驗報告", true, "folder"],
+  ["5.3.3.2", "m5-3-3-2-patient-pk-and-initial-tolerability-study-reports", "5332-patient-pk-init-tol-stud-rep", "study-report", "病人藥動及起始耐受性試驗報告", true, "folder"],
+  ["5.3.3.3", "m5-3-3-3-intrinsic-factor-pk-study-reports", "5333-intrin-factor-pk-stud-rep", "study-report", "內因性因子藥動試驗報告", true, "folder"],
+  ["5.3.3.4", "m5-3-3-4-extrinsic-factor-pk-study-reports", "5334-extrin-factor-pk-stud-rep", "study-report", "外因性因子藥動試驗報告", true, "folder"],
+  ["5.3.3.5", "m5-3-3-5-population-pk-study-reports", "5335-popul-pk-stud-rep", "study-report", "群體藥動學試驗報告", true, "folder"],
+  ["5.3.4", "m5-3-4-reports-of-human-pharmacodynamics-pd-studies", "534-rep-human-pd-stud", null, "人體藥效學試驗報告", false],
+  ["5.3.4.1", "m5-3-4-1-healthy-subject-pd-and-pk-pd-study-reports", "5341-healthy-subj-pd-stud-rep", "study-report", "健康受試者藥效學與藥動／藥效學試驗報告", true, "folder"],
+  ["5.3.4.2", "m5-3-4-2-patient-pd-and-pk-pd-study-reports", "5342-patient-pd-stud-rep", "study-report", "病人藥效學與藥動／藥效學試驗報告", true, "folder"],
+  // One 5.3.5 per indication; "@i" is the indication folder.
+  ["5.3.5", "m5-3-5-reports-of-efficacy-and-safety-studies", "535-rep-effic-safety-stud/@i", null, "療效與安全性之試驗報告", false],
+  ["5.3.5.1", "m5-3-5-1-study-reports-of-controlled-clinical-studies-pertinent-to-the-claimed-indication", "5351-stud-rep-contr", "study-report", "與宣稱適應症相關的對照臨床研究之試驗報告", true, "folder"],
+  ["5.3.5.2", "m5-3-5-2-study-reports-of-uncontrolled-clinical-studies", "5352-stud-rep-uncontr", "study-report", "無對照組臨床研究之試驗報告", true, "folder"],
+  ["5.3.5.3", "m5-3-5-3-reports-of-analyses-of-data-from-more-than-one-study", "5353-rep-analys-data-more-one-stud", "study-report", "綜合多個試驗數據之分析報告", true, "folder"],
+  ["5.3.5.4", "m5-3-5-4-other-study-reports", "5354-other-stud-rep", "study-report", "其他試驗報告", true, "folder"],
+  ["5.3.6", "m5-3-6-reports-of-postmarketing-experience", "536-postmark-exp", "postmarketing-experience", "上市後使用經驗報告"],
+  ["5.3.7", "m5-3-7-case-report-forms-and-individual-patient-listings", "537-crf-ipl", "listing", "病例報告表及個別病人列表", true, "folder"],
+  ["5.4", "m5-4-literature-references", "54-lit-ref", "reference", "參考文獻"],
+].map(([node, element, dir, base, title, files = true, study = null]) => ({ node, element, dir, base, title, files, study, module: Number(node[0]) }));
 
 /** Parent node: "3.2.s.4.1" → "3.2.s.4"; the M2.3 sub-parts sit under "2.3". */
 export function parentNode(node) {

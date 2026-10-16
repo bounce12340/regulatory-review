@@ -28,8 +28,8 @@ TFDA 查驗登記文件審查與進度追蹤平台，部署在 **Cloudflare Work
 | 風險自動判定 | 範本項目的風險依 `config/regulatory_schemas.yaml` 的 `risk_rules` 隨狀態自動計算；自訂項目可手動設定 |
 | 時程 / 多專案比較 | 截止日倒數、完成度與時程消耗對照、健康雷達圖 |
 | AI 文件分析 | 一次上傳一份或多份（最多 20 份、合計 10 萬字）含文字的 PDF、Word .docx、Excel .xlsx、純文字 → 瀏覽器轉成文字 → Ollama 雲端模型把多份文件視為同一申請案，逐項比對檢查清單 → 缺口報告（註明依據檔案）。整套資料超過上限時改用案件頁的批次上傳＋AI 全案審查 |
-| eCTD 打包 | 依 TFDA「藥品查驗登記電子通用技術文件指引」eCTD-R2.1 把案件的 PDF 打包成送件 ZIP：填寫 tw-envelope（取號號碼、序列、送件目的與種類、Tier 1–5、申請者、藥品名稱、INN 等），每個附件指定 CTD 節點（Module 1 依附件一、Module 2／3 依 ICH Appendix 4）與頁面標題，系統自動命名檔案與資料夾，產生 tw-regional.xml、index.xml、index-md5.txt 與 util 檔（ICH 與 TW 的 DTD、MOD、XSL，checksum 與公告值一致），以 ZIP64 寫出（Chrome／Edge 直接寫入磁碟，6 GB 以上可用），完成後自動驗證。Module 4／5 尚未支援 |
-| eCTD 補件（生命週期） | 每次產生的序列會記錄其內容（leaf ID 依序列與附件固定，重新產生不會改變）；也可匯入實際送出的 ZIP 作為紀錄。製作補件序列時，已送出的文件預設不再放入，改正後的文件可選擇「替換」先前文件（operation="replace"、modified-file 指向原 leaf），不再需要的文件可勾選「刪除」（operation="delete"、無檔案、checksum 空白）；並檢查序列不可跳號、UUID 須一致。tw-regional.xml 內 leaf 的 modified-file 以該 XML 所在位置為基準（TFDA 未公布範例，依 EU Module 1 慣例） |
+| eCTD 打包 | 依 TFDA「藥品查驗登記電子通用技術文件指引」eCTD-R2.1 把案件的 PDF 打包成送件 ZIP：填寫 tw-envelope（取號號碼、序列、送件目的與種類、Tier 1–5、申請者、藥品名稱、INN 等），每個附件指定 CTD 節點（Module 1 依附件一、Module 2–5 依 ICH Appendix 4）與頁面標題，系統自動命名檔案與資料夾，產生 tw-regional.xml、index.xml、index-md5.txt 與 util 檔（ICH 與 TW 的 DTD、MOD、XSL，checksum 與公告值一致），以 ZIP64 寫出（Chrome／Edge 直接寫入磁碟，6 GB 以上可用），完成後自動驗證。Module 4／5（表十一、表十二）的試驗報告依試驗分組：每份文件填試驗名稱，同一試驗放在以該名稱為標題的延伸節點（node extension）下；Module 5 每個試驗另有資料夾，5.3.5 依適應症建立資料夾並帶 indication 屬性 |
+| eCTD 補件（生命週期） | 每次產生的序列會記錄其內容（leaf ID 依序列與附件固定，重新產生不會改變）；也可匯入實際送出的 ZIP 作為紀錄。製作補件序列時，已送出的文件預設不再放入，改正後的文件可選擇「替換」先前文件（operation="replace"、modified-file 指向原 leaf；Module 4／5 的替換文件自動沿用原文件的試驗，放在同一延伸節點），不再需要的文件可勾選「刪除」（operation="delete"、無檔案、checksum 空白）；並檢查序列不可跳號、UUID 須一致。tw-regional.xml 內 leaf 的 modified-file 以該 XML 所在位置為基準（TFDA 未公布範例，依 EU Module 1 慣例） |
 | eCTD 驗證 | 上傳任何 eCTD 的 ZIP 或資料夾，在瀏覽器內依「藥品查驗登記電子通用技術文件驗證指引」eCTD-V-R2.1 檢查規則 A–P：util 檔 checksum、index.xml 與 tw-regional.xml 的 DTD 驗證、MD5、envelope、命名與路徑長度、未引用檔案、空資料夾、PDF 版本與損毀等，區分 P/F（不予收件）與 BP（提醒），可下載報告。生命週期規則（I.8、K.9、K.10、K.12、M.2、M.4）在同一次上傳含先前序列時檢查；在打包頁會用案件的序列紀錄檢查 |
 | 匯出 | Markdown、CSV（Excel 可開）、JSON、列印 / 存成 PDF |
 

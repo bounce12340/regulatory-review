@@ -318,7 +318,7 @@ function decorateItems(schemaType: string, items: ItemRow[]) {
 
 interface AttachmentInfo {
   id: number; item_id: number; filename: string; size_bytes: number; created_at: string; uploaded_by_name: string | null;
-  text_status: string; text_chars: number; ectd_node: string | null; ectd_title: string | null;
+  text_status: string; text_chars: number; ectd_node: string | null; ectd_title: string | null; ectd_study: string | null;
 }
 
 /**
@@ -358,7 +358,7 @@ function reviewJson(r: ReviewRow | undefined) {
 async function projectAttachments(env: Env, projectId: number): Promise<Map<number, AttachmentInfo[]>> {
   const { results } = await env.DB.prepare(
     `SELECT a.id, a.item_id, a.filename, a.size_bytes, a.created_at, u.full_name AS uploaded_by_name,
-            a.text_status, a.text_chars, a.ectd_node, a.ectd_title
+            a.text_status, a.text_chars, a.ectd_node, a.ectd_title, a.ectd_study
        FROM attachment a LEFT JOIN user u ON u.id = a.uploaded_by
       WHERE a.project_id = ? ORDER BY a.created_at, a.id`,
   ).bind(projectId).all<AttachmentInfo>();
@@ -830,17 +830,18 @@ async function putAttachmentText(request: Request, env: Env, user: AuthUser, id:
   return json({ ok: true, text_status: status, text_chars: status === "ok" ? text.length : 0 });
 }
 
-/** CTD section ("1.1.4", "3.2.s.4.1", "2.3.i") and leaf title for eCTD packaging. */
+/** CTD section ("1.1.4", "3.2.s.4.1", "2.3.i"), leaf title and study (M4/M5) for eCTD packaging. */
 const ECTD_NODE_RE = /^[1-5](?:\.[0-9a-z]{1,2}){0,5}$/;
 
 async function updateAttachment(request: Request, env: Env, user: AuthUser, id: number): Promise<Response> {
   requireRole(user, "admin", "member");
   const row = await attachmentRow(env, user, id);
   const body = await readJson(request);
-  const cur = await env.DB.prepare("SELECT ectd_node, ectd_title FROM attachment WHERE id = ?").bind(row.id)
-    .first<{ ectd_node: string | null; ectd_title: string | null }>();
+  const cur = await env.DB.prepare("SELECT ectd_node, ectd_title, ectd_study FROM attachment WHERE id = ?").bind(row.id)
+    .first<{ ectd_node: string | null; ectd_title: string | null; ectd_study: string | null }>();
   let node = cur?.ectd_node ?? null;
   let title = cur?.ectd_title ?? null;
+  let study = cur?.ectd_study ?? null;
   if (body.ectd_node !== undefined) {
     node = body.ectd_node === null || body.ectd_node === "" ? null : str(body.ectd_node, "eCTD 節點", { max: 20 }).toLowerCase();
     if (node !== null && !ECTD_NODE_RE.test(node)) throw new HttpError(400, "eCTD 節點格式不正確。");
@@ -848,8 +849,11 @@ async function updateAttachment(request: Request, env: Env, user: AuthUser, id: 
   if (body.ectd_title !== undefined) {
     title = body.ectd_title === null ? null : str(body.ectd_title, "eCTD 標題", { max: 300, required: false }) || null;
   }
-  await env.DB.prepare("UPDATE attachment SET ectd_node = ?, ectd_title = ? WHERE id = ?").bind(node, title, row.id).run();
-  return json({ id: row.id, ectd_node: node, ectd_title: title });
+  if (body.ectd_study !== undefined) {
+    study = body.ectd_study === null ? null : str(body.ectd_study, "試驗名稱", { max: 200, required: false }) || null;
+  }
+  await env.DB.prepare("UPDATE attachment SET ectd_node = ?, ectd_title = ?, ectd_study = ? WHERE id = ?").bind(node, title, study, row.id).run();
+  return json({ id: row.id, ectd_node: node, ectd_title: title, ectd_study: study });
 }
 
 /** Envelope and product details for building the case's eCTD sequence. */

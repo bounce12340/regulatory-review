@@ -309,6 +309,12 @@ await step("eCTD: node and title per attachment, envelope and sequence history p
   // Clearing the node keeps the title.
   const p2 = await a("PATCH", `/api/attachments/${id}`, { ectd_node: "" });
   assert.deepEqual([p2.data.ectd_node, p2.data.ectd_title], [null, "藥品查驗登記申請書"]);
+  // Module 4/5: the study (node extension) an attachment belongs to.
+  const p3 = await a("PATCH", `/api/attachments/${id}`, { ectd_node: "5.3.5.1", ectd_study: "  EXA-301 第三期試驗（虛擬）  " });
+  assert.deepEqual([p3.data.ectd_node, p3.data.ectd_title, p3.data.ectd_study], ["5.3.5.1", "藥品查驗登記申請書", "EXA-301 第三期試驗（虛擬）"]);
+  assert.equal((await a("PATCH", `/api/attachments/${id}`, { ectd_study: "x".repeat(201) })).status, 400);
+  assert.equal((await a("PATCH", `/api/attachments/${id}`, { ectd_study: "" })).data.ectd_study, null);
+  await a("PATCH", `/api/attachments/${id}`, { ectd_study: "EXA-301", ectd_node: "" });
 
   const ectd = { envelope: { identifier: "550e8400-e29b-41d4-a716-446655442895", sequence: "0000" }, product: { substance: "Examplin" } };
   const put = await a("PUT", `/api/projects/${projectId}/ectd`, { ectd });
@@ -316,6 +322,7 @@ await step("eCTD: node and title per attachment, envelope and sequence history p
   const detail = (await viewer("GET", `/api/projects/${projectId}`)).data;
   assert.deepEqual(detail.ectd, ectd);
   assert.equal(detail.items[0].attachments.find((x) => x.id === id).ectd_title, "藥品查驗登記申請書");
+  assert.equal(detail.items[0].attachments.find((x) => x.id === id).ectd_study, "EXA-301");
   assert.equal((await a("PUT", `/api/projects/${projectId}/ectd`, { ectd: [1] })).status, 400);
   assert.equal((await a("PUT", `/api/projects/${projectId}/ectd`, { ectd: { x: "y".repeat(40000) } })).status, 413);
   assert.equal((await viewer("PUT", `/api/projects/${projectId}/ectd`, { ectd })).status, 403);

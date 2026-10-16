@@ -27,6 +27,14 @@ export const ITEM_NODES = {
   p_container_closure: ["3.2.p.7"],
   p8_stability: ["3.2.p.8", "3.2.p.8.1", "3.2.p.8.2", "3.2.p.8.3"],
   r1_master_record: ["3.2.r"],
+  // 新藥查驗登記：Module 4／5 (study reports; the first node is the default)
+  m4_risk_coverage: ["4.2.3.2", "4.2.3.3.1", "4.2.3.3.2", "4.2.3.4.1", "4.2.3.5.1", "4.2.3.5.2", "4.2.3.5.3", "4.2.3.5.4"],
+  m4_qualification: ["4.2.3.7.6", "4.2.3.7.7"],
+  m4_label_translation: ["2.4", "2.6.6"],
+  m5_clinical_pharmacology: ["5.3.3.1", "5.3.3.2", "5.3.3.3", "5.3.3.4", "5.3.3.5", "5.3.1.2", "5.3.2.2", "2.7.2"],
+  m5_clinical: ["5.3.5.1", "5.3.5.2", "5.3.5.4"],
+  m5_statistics: ["5.3.5.3", "5.3.5.1"],
+  m5_postmarketing: ["5.3.6", "1.13"],
   // 原料藥／DMF
   dmf1_rtf_form: ["1.1.4"], dmf2_rtf_form: ["1.1.4"], dmf3_rtf_form: ["1.1.4"], dmf4_rtf_form: ["1.1.4"],
   dmf1_ctd_32s: ["3.2.s"], dmf2_ctd_open: ["3.2.s"],
