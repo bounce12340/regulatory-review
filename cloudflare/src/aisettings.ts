@@ -48,21 +48,32 @@ export const PROVIDERS: Provider[] = [
 export const providerById = (id: string) => PROVIDERS.find((p) => p.id === id) ?? null;
 
 /**
- * Why a custom API address is unsafe, or null when it is fine: HTTPS only, and never a
- * bare IP address or an internal-looking host name. Local test runs may allow
- * http://localhost with AI_ALLOW_LOCAL_BASE_URL=true.
+ * Why a custom API address is unsafe, or null when it is fine: HTTPS on the standard port,
+ * a public-looking domain name (never an IP address or an internal name), and nothing after
+ * the path that could change where requests go. Local test runs may allow
+ * http://localhost with AI_ALLOW_LOCAL_BASE_URL=true. The services are also called with
+ * redirects refused, so an address cannot bounce requests elsewhere.
  */
 export function baseUrlProblem(raw: string, allowLocal = false): string | null {
   let u: URL;
   try { u = new URL(raw); } catch { return "API 網址格式不正確。"; }
-  if (u.username || u.password || u.search || u.hash) return "API 網址不可包含帳號密碼、查詢參數或 #。";
-  const host = u.hostname.toLowerCase();
+  // A bare "?" or "#" leaves u.search / u.hash empty, so look at the raw text too.
+  if (u.username || u.password || /[?#]/.test(raw)) return "API 網址不可包含帳號密碼、查詢參數或 #。";
+  const host = u.hostname.toLowerCase().replace(/\.$/, "");
   const local = host === "localhost" || host === "127.0.0.1" || host === "[::1]";
   if (allowLocal && local && u.protocol === "http:") return null;
   if (u.protocol !== "https:") return "API 網址必須以 https:// 開頭。";
+  if (u.port) return "API 網址請使用標準 HTTPS 連接埠（不指定連接埠）。";
   if (/^\d+(\.\d+){3}$/.test(host) || host.startsWith("[")) return "API 網址請使用網域名稱，不能是 IP 位址。";
-  if (local || !host.includes(".") || /\.(local|internal|localhost|lan|home|corp)$/.test(host)) return "API 網址不能指向內部網路。";
+  if (local || !host.includes(".") || u.hostname.endsWith(".")
+    || /\.(local|internal|localhost|lan|home|corp|intranet|private)$/.test(host)) return "API 網址不能指向內部網路。";
   return null;
+}
+
+/** The address as stored and called: origin plus path, without a trailing slash. */
+export function normalizeBaseUrl(raw: string): string {
+  const u = new URL(raw);
+  return `${u.origin}${u.pathname}`.replace(/\/+$/, "");
 }
 
 // ── Encryption of stored keys ────────────────────────────────────────────────
@@ -80,22 +91,35 @@ async function sealingKey(secret: string): Promise<CryptoKey> {
   );
 }
 
-/** "v1.<iv>.<ciphertext>", base64; the company id is authenticated alongside. */
-export async function sealKey(secret: string, companyId: number, apiKey: string): Promise<string> {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv, additionalData: enc.encode(`company:${companyId}`) }, await sealingKey(secret), enc.encode(apiKey),
-  );
-  return `v1.${b64(iv)}.${b64(new Uint8Array(ct))}`;
+/** What a stored key is bound to: it only decrypts for this company, service and address. */
+export interface KeyBinding {
+  companyId: number;
+  provider: string;
+  baseUrl: string | null;
 }
 
-/** The key, or null when it cannot be decrypted (wrong secret, other company, damaged). */
-export async function openKey(secret: string, companyId: number, sealed: string): Promise<string | null> {
+const bindingData = (b: KeyBinding) => enc.encode(JSON.stringify(["company-ai-key", b.companyId, b.provider, b.baseUrl ?? ""]));
+
+/**
+ * "v2.<iv>.<ciphertext>", base64. The company, service and address are authenticated
+ * alongside, so changing any of them in the database (without the secret) makes the key
+ * unreadable instead of sending it somewhere new.
+ */
+export async function sealKey(secret: string, binding: KeyBinding, apiKey: string): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv, additionalData: bindingData(binding) }, await sealingKey(secret), enc.encode(apiKey),
+  );
+  return `v2.${b64(iv)}.${b64(new Uint8Array(ct))}`;
+}
+
+/** The key, or null when it cannot be decrypted (wrong secret or binding, damaged). */
+export async function openKey(secret: string, binding: KeyBinding, sealed: string): Promise<string | null> {
   const [v, iv, ct] = sealed.split(".");
-  if (v !== "v1" || !iv || !ct) return null;
+  if (v !== "v2" || !iv || !ct) return null;
   try {
     const pt = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: unb64(iv), additionalData: enc.encode(`company:${companyId}`) }, await sealingKey(secret), unb64(ct),
+      { name: "AES-GCM", iv: unb64(iv), additionalData: bindingData(binding) }, await sealingKey(secret), unb64(ct),
     );
     return new TextDecoder().decode(pt);
   } catch {

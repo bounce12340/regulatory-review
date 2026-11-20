@@ -112,6 +112,8 @@ export async function extractForReview(file) {
       if (readable < pages.length * MIN_CHARS_PER_PAGE) return { status: "scanned", text: "" };
       text = pages.map((t, i) => `【第 ${i + 1} 頁】\n${t.trim()}`).join("\n\n");
       if (pages.length < numPages) text += `\n\n（全文共 ${numPages} 頁，只擷取前 ${pages.length} 頁）`;
+    } else if ((ext === "docx" || ext === "xlsx") && file.size > MAX_OFFICE_BYTES) {
+      return { status: "failed", text: "" };
     } else if (ext === "docx") {
       text = await docxText(new Uint8Array(await file.arrayBuffer()));
     } else if (ext === "xlsx") {
@@ -162,8 +164,21 @@ async function unzip(buf) {
       const data = buf.subarray(start, start + e.compSize);
       if (e.method === 0) return new TextDecoder().decode(data);
       if (e.method !== 8) throw new Error("不支援的壓縮格式。");
-      const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-      return await new Response(stream).text();
+      // Stop a compression bomb: real document parts inflate to a few MB.
+      const reader = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw")).getReader();
+      const chunks = [];
+      let size = 0;
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > MAX_INFLATED_BYTES) {
+          await reader.cancel().catch(() => {});
+          throw new Error("文件解壓縮後過大。");
+        }
+        chunks.push(value);
+      }
+      return await new Blob(chunks).text();
     },
   };
 }
@@ -248,6 +263,7 @@ async function xlsxText(buf) {
           value = type === "s" ? shared[Number(v)] ?? "" : v;
         }
         const col = columnIndex(c.getAttribute("r")) ?? cells.length;
+        if (col > MAX_COLUMN) continue; // beyond Excel's last column: a damaged or crafted file
         while (cells.length < col) cells.push("");
         cells[col] = value;
       }
@@ -256,6 +272,14 @@ async function xlsxText(buf) {
   }
   return out.join("\n");
 }
+
+/** Largest single part of a .docx/.xlsx file once inflated. */
+const MAX_INFLATED_BYTES = 64 * 1024 * 1024;
+/** Largest Office file read for text; bigger ones are left for the user to split. */
+const MAX_OFFICE_BYTES = 100 * 1024 * 1024;
+
+/** Excel's last column is XFD (index 16383). */
+const MAX_COLUMN = 16383;
 
 function columnIndex(ref) {
   const letters = /^([A-Z]+)\d+$/.exec(ref ?? "")?.[1];

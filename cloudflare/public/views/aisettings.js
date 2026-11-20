@@ -29,7 +29,7 @@ function currentSheet(data) {
     a.ai_enabled ? h("dl", { class: "kv" },
       h("dt", {}, "AI 服務"), h("dd", {}, a.ai_provider),
       h("dt", {}, "模型"), h("dd", { class: "mono" }, a.ai_model),
-      h("dt", {}, "金鑰"), h("dd", {}, a.ai_source === "company" ? `公司自己的金鑰（…${c.key_hint}）` : "系統預設"),
+      h("dt", {}, "金鑰"), h("dd", {}, a.ai_source === "company" ? `公司自己的金鑰${c?.key_hint ? `（…${c.key_hint}）` : ""}` : "系統預設"),
       c?.base_url ? [h("dt", {}, "API 網址"), h("dd", { class: "mono" }, c.base_url)] : null,
       c ? [h("dt", {}, "最後變更"), h("dd", {}, `${when(c.updated_at)}${c.updated_by_name ? `，${c.updated_by_name}` : ""}`)] : null,
     ) : h("p", {}, "目前沒有可用的 AI 服務，AI 分析功能暫停。"),

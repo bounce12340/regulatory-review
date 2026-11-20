@@ -187,7 +187,9 @@ async function validateSequence(root, allEntries, files, progress) {
     const bytes = await streamBytes(entry.stream());
     const sum = new Md5().update(bytes).hex();
     if (sum !== u.md5) add(r3, `${name} 的 checksum 為 ${sum}，與公告值 ${u.md5} 不同（檔案內容被改過或版本不對）。`, u.path);
-    utilText.set(u.path, new TextDecoder("utf-8").decode(bytes));
+    // Only the published files are trusted for validating: a changed DTD is flagged above
+    // and the bundled copy is used instead.
+    else utilText.set(u.path, new TextDecoder("utf-8").decode(bytes));
   }
 
   // ── G index.xml ──
@@ -408,7 +410,7 @@ async function validateSequence(root, allEntries, files, progress) {
   return result;
 }
 
-/** The DTD to validate against: the package's own util copy when it is the published one. */
+/** The DTD to validate against: the package's own util copy (kept only when its checksum is the published one), else the bundled copy. */
 const dtdCache = new Map();
 function dtdFor(kind, utilText) {
   const files = kind === "ich" ? ["util/dtd/ich-ectd-3-2.dtd"] : ["util/dtd/tw-regional.dtd", "util/dtd/tw-envelope.mod", "util/dtd/tw-leaf.mod"];

@@ -93,6 +93,13 @@ http.createServer((req, res) => {
   req.on("end", () => {
     const body = JSON.parse(raw || "{}");
     last = { url: req.url, headers: req.headers, body };
+    // /redirect/... answers 307 to the same path without the prefix, to check that
+    // redirects are not followed.
+    if (req.url.startsWith("/redirect/")) {
+      res.writeHead(307, { Location: req.url.slice("/redirect".length) });
+      res.end();
+      return;
+    }
     if (req.url === "/v1/chat/completions") return openAiCompatible(body, req, res);
     if (req.url === "/v1/messages") return anthropicMessages(body, req, res);
     if (req.url !== "/api/chat") {

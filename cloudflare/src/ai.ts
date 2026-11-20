@@ -10,6 +10,14 @@
 import { AnalysisError, chat, type AiConfig, type ChatMessage } from "./llm";
 import { SCHEMAS, type Schema } from "./schemas";
 
+/**
+ * Document text cannot close or open the <document> wrapper that marks it as data: any
+ * "<document" or "</document" inside it is shown with a full-width bracket instead.
+ */
+export function defangDocumentTags(text: string): string {
+  return text.replace(/<(\/?)(document)/gi, "＜$1$2");
+}
+
 export { AnalysisError, type AiConfig } from "./llm";
 
 export const MAX_TEXT_CHARS = 100_000;
@@ -139,7 +147,7 @@ export async function analyzeDocument(cfg: AiConfig, schemaType: string, input: 
     (many ? "某項要求只要在任一份文件中符合即視為符合；explanation 請註明依據或缺漏所在的檔案名稱。" : "") +
     `gaps 只列出未完全符合的項目；完全符合者列入 compliant_items。\n\n` +
     `## 輸出格式\n只輸出一個符合下列 JSON Schema 的 JSON 物件：\n${JSON.stringify(GAP_REPORT_SCHEMA)}`;
-  const documents = input.files.map((f) => `<document filename="${escapeAttr(f.filename)}">\n${f.text}\n</document>`).join("\n\n");
+  const documents = input.files.map((f) => `<document filename="${escapeAttr(f.filename)}">\n${defangDocumentTags(f.text)}\n</document>`).join("\n\n");
   const messages: ChatMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
     { role: "user", content: `${documents}\n\n${instructions}` },
@@ -319,7 +327,7 @@ export function documentsBlock(files: ReviewFile[], budget = MAX_REVIEW_TEXT_CHA
     const share = Math.floor(remaining / (readable.length - i));
     const text = f.text!.length > share ? `${f.text!.slice(0, share)}\n…（以下省略，原文共 ${f.text!.length.toLocaleString()} 字元）` : f.text!;
     remaining -= Math.min(f.text!.length, share);
-    out.push(`<document filename="${escapeAttr(f.filename)}">\n${text}\n</document>`);
+    out.push(`<document filename="${escapeAttr(f.filename)}">\n${defangDocumentTags(text)}\n</document>`);
   });
   for (const f of files.filter((x) => !x.text)) {
     const why = f.text_status === "scanned" ? "掃描檔，無文字層" : f.text_status === "unsupported" ? "格式無法擷取文字" : "未能擷取文字";
