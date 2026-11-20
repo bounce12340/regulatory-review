@@ -9,6 +9,10 @@ import {
   clearSessionCookie, hashIterations, hashPassword, MAX_PBKDF2_ITERATIONS, MIN_PBKDF2_ITERATIONS, hashToken, newSessionToken, normalizeEmail,
   readSessionCookie, sessionCookie, slugify, validatePassword, verifyPassword,
 } from "./auth";
+import {
+  API_KEY_DAYS, API_KEY_SCOPES, apiKeyPrincipal, bearerApiKey, createApiKey, keyRequestProblem, MAX_KEYS_PER_USER, recordKeyUse,
+  type ApiKeyPrincipal,
+} from "./apikeys";
 import { AnalysisError, analyzeDocument, MAX_FILES, MAX_TEXT_CHARS, reviewItem, type AiConfig } from "./ai";
 import { handleMcp } from "./mcp";
 import {
@@ -973,6 +977,7 @@ async function updateUser(request: Request, env: Env, user: AuthUser, targetId: 
     stmts.push(env.DB.prepare("DELETE FROM session WHERE user_id = ?").bind(target.id));
     stmts.push(env.DB.prepare("DELETE FROM mcp_access_token WHERE grant_id IN (SELECT id FROM mcp_grant WHERE user_id = ?)").bind(target.id));
     stmts.push(env.DB.prepare("DELETE FROM mcp_grant WHERE user_id = ?").bind(target.id));
+    stmts.push(env.DB.prepare("DELETE FROM api_key WHERE user_id = ?").bind(target.id));
   }
   await env.DB.batch(stmts);
   return listUsers(env, user);
@@ -991,6 +996,7 @@ async function deleteUser(env: Env, user: AuthUser, targetId: number): Promise<R
     env.DB.prepare("DELETE FROM mcp_access_token WHERE grant_id IN (SELECT id FROM mcp_grant WHERE user_id = ?)").bind(target.id),
     env.DB.prepare("DELETE FROM mcp_grant WHERE user_id = ?").bind(target.id),
     env.DB.prepare("DELETE FROM oauth_code WHERE user_id = ?").bind(target.id),
+    env.DB.prepare("DELETE FROM api_key WHERE user_id = ?").bind(target.id),
     env.DB.prepare("UPDATE checklist_item SET updated_by = NULL WHERE updated_by = ?").bind(target.id),
     env.DB.prepare("UPDATE project SET created_by = NULL WHERE created_by = ?").bind(target.id),
     env.DB.prepare("UPDATE attachment SET uploaded_by = NULL WHERE uploaded_by = ?").bind(target.id),
@@ -1169,6 +1175,72 @@ async function deleteMcpGrant(env: Env, user: AuthUser, id: number): Promise<Res
   return json({ ok: true });
 }
 
+// ── API keys (REST API for the company's own programs) ───────────────────────
+
+interface ApiKeyRow {
+  id: number; user_id: number; user_name: string | null; name: string; scope: string; key_hint: string;
+  expires_at: string; created_at: string; last_used_at: string | null;
+}
+
+const API_KEY_COLUMNS = `k.id, k.user_id, u.full_name AS user_name, k.name, k.scope, k.key_hint, k.expires_at, k.created_at, k.last_used_at`;
+
+async function apiKeysOverview(env: Env, url: URL, user: AuthUser): Promise<Response> {
+  const company = await env.DB.prepare("SELECT api_enabled FROM company WHERE id = ?").bind(user.company_id).first<{ api_enabled: number }>();
+  const { results: mine } = await env.DB.prepare(
+    `SELECT ${API_KEY_COLUMNS} FROM api_key k LEFT JOIN user u ON u.id = k.user_id WHERE k.user_id = ? ORDER BY k.created_at DESC`,
+  ).bind(user.id).all<ApiKeyRow>();
+  let admin = null;
+  if (user.role === "admin") {
+    const [{ results: keys }, { results: audit }] = await Promise.all([
+      env.DB.prepare(
+        `SELECT ${API_KEY_COLUMNS} FROM api_key k LEFT JOIN user u ON u.id = k.user_id WHERE k.company_id = ? ORDER BY k.created_at DESC`,
+      ).bind(user.company_id).all<ApiKeyRow>(),
+      env.DB.prepare(
+        `SELECT a.created_at, a.key_name, a.method, a.path, a.status, u.full_name AS user_name
+           FROM api_audit a LEFT JOIN user u ON u.id = a.user_id WHERE a.company_id = ? ORDER BY a.id DESC LIMIT 100`,
+      ).bind(user.company_id).all(),
+    ]);
+    admin = { keys, audit };
+  }
+  return json({ enabled: Boolean(company?.api_enabled), base_url: `${url.origin}/api`, keys: mine, admin });
+}
+
+async function updateApiSettings(request: Request, env: Env, url: URL, user: AuthUser): Promise<Response> {
+  requireRole(user, "admin");
+  const body = await readJson(request);
+  if (typeof body.enabled !== "boolean") throw new HttpError(400, "請指定 enabled。");
+  await env.DB.prepare("UPDATE company SET api_enabled = ? WHERE id = ?").bind(body.enabled ? 1 : 0, user.company_id).run();
+  return apiKeysOverview(env, url, user);
+}
+
+async function createApiKeyRoute(request: Request, env: Env, user: AuthUser): Promise<Response> {
+  const company = await env.DB.prepare("SELECT api_enabled FROM company WHERE id = ?").bind(user.company_id).first<{ api_enabled: number }>();
+  if (!company?.api_enabled) throw new HttpError(400, "公司管理員尚未開啟 API 金鑰。");
+  const body = await readJson(request);
+  const name = str(body.name, "名稱", { max: 100 });
+  const scope = oneOf(body.scope ?? "read", API_KEY_SCOPES, "權限");
+  if (scope !== "read" && user.role === "viewer") throw new HttpError(403, "檢視者只能建立唯讀金鑰。");
+  const days = Number(body.days ?? 90);
+  if (!(API_KEY_DAYS as readonly number[]).includes(days)) throw new HttpError(400, "有效期限只能是 30、90 或 365 天。");
+  const { count } = (await env.DB.prepare("SELECT COUNT(*) AS count FROM api_key WHERE user_id = ?")
+    .bind(user.id).first<{ count: number }>())!;
+  if (count >= MAX_KEYS_PER_USER) throw new HttpError(400, `每人最多 ${MAX_KEYS_PER_USER} 把金鑰，請先撤銷不用的金鑰。`);
+  return json(await createApiKey(env.DB, user, name, scope, days), 201);
+}
+
+async function deleteApiKey(env: Env, user: AuthUser, id: number): Promise<Response> {
+  const key = await env.DB.prepare("SELECT id, user_id FROM api_key WHERE id = ? AND company_id = ?")
+    .bind(id, user.company_id).first<{ id: number; user_id: number }>();
+  if (!key || (key.user_id !== user.id && user.role !== "admin")) throw new HttpError(404, "找不到此金鑰。");
+  await env.DB.prepare("DELETE FROM api_key WHERE id = ?").bind(key.id).run();
+  return json({ ok: true });
+}
+
+/** A 401 for a missing, unknown or expired bearer key, in the RFC 6750 shape scripts expect. */
+function invalidKey(message: string): Response {
+  return json({ error: message }, 401, { "WWW-Authenticate": 'Bearer realm="regreview-api", error="invalid_token"' });
+}
+
 /** Browsers may call /mcp from other sites only over HTTPS, or from a local dev tool. */
 function mcpOriginAllowed(origin: string | null, url: URL): boolean {
   if (!origin || origin === url.origin) return true;
@@ -1275,9 +1347,13 @@ const routes: Array<[string, RegExp, Handler]> = [
   ["PATCH", /^\/api\/mcp\/settings$/, ({ request, env, url, user }) => updateMcpSettings(request, env, url, user)],
   ["POST", /^\/api\/mcp\/tokens$/, ({ request, env, user }) => createMcpToken(request, env, user)],
   ["DELETE", /^\/api\/mcp\/grants\/(\d+)$/, ({ env, user, params }) => deleteMcpGrant(env, user, idParam(params[0]))],
+  ["GET", /^\/api\/api-keys$/, ({ env, url, user }) => apiKeysOverview(env, url, user)],
+  ["PATCH", /^\/api\/api-keys\/settings$/, ({ request, env, url, user }) => updateApiSettings(request, env, url, user)],
+  ["POST", /^\/api\/api-keys$/, ({ request, env, user }) => createApiKeyRoute(request, env, user)],
+  ["DELETE", /^\/api\/api-keys\/(\d+)$/, ({ env, user, params }) => deleteApiKey(env, user, idParam(params[0]))],
 ];
 
-async function handleApi(request: Request, env: Env): Promise<Response> {
+async function handleApi(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
 
@@ -1311,6 +1387,9 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       })),
     });
   }
+  // A program calling with an API key instead of a session cookie.
+  if (request.headers.has("Authorization")) return handleKeyRequest(request, env, ctx, url, method);
+
   if (url.pathname === "/api/auth/register" && method === "POST") return register(request, env);
   if (url.pathname === "/api/auth/login" && method === "POST") return login(request, env);
   if (url.pathname === "/api/auth/logout" && method === "POST") return logout(request, env);
@@ -1330,14 +1409,56 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
   throw new HttpError(matchedPath ? 405 : 404, matchedPath ? "不支援此方法。" : "找不到此 API。");
 }
 
+/**
+ * A request authenticated by `Authorization: Bearer rrk_…`. It runs as the key's member,
+ * within the key's scope, and is recorded for the company admin (forbidden attempts too).
+ */
+async function handleKeyRequest(request: Request, env: Env, ctx: ExecutionContext, url: URL, method: string): Promise<Response> {
+  const raw = bearerApiKey(request);
+  if (!raw) return invalidKey("請以 Authorization: Bearer <API 金鑰> 呼叫 API；AI 代理連線的權杖不能用於 REST API。");
+  const now = nowIso();
+  const p = await apiKeyPrincipal(env.DB, raw, now);
+  if (!p) return invalidKey("API 金鑰無效、已過期或已撤銷。");
+  if (!p.api_enabled) throw new HttpError(403, "公司管理員已關閉 API 金鑰。");
+  const user: AuthUser = {
+    id: p.id, email: p.email, full_name: p.full_name, role: p.role,
+    company_id: p.company_id, company_name: p.company_name, company_slug: p.company_slug,
+  };
+  const path = url.pathname;
+  let status = 500;
+  try {
+    const problem = keyRequestProblem(p.scope, method, path);
+    if (problem) throw new HttpError(403, problem);
+    let res: Response | null = null;
+    if (path === "/api/auth/me" && method === "GET") res = json({ user, api_key: { name: p.key_name, scope: p.scope } });
+    let matchedPath = false;
+    for (const [m, pattern, handler] of res ? [] : routes) {
+      const match = path.match(pattern);
+      if (!match) continue;
+      matchedPath = true;
+      if (m !== method) continue;
+      res = await handler({ request, env, url, params: match.slice(1), user });
+      break;
+    }
+    if (!res) throw new HttpError(matchedPath ? 405 : 404, matchedPath ? "不支援此方法。" : "找不到此 API。");
+    status = res.status;
+    return res;
+  } catch (err) {
+    if (err instanceof HttpError) status = err.status;
+    throw err;
+  } finally {
+    ctx.waitUntil(recordKeyUse(env.DB, p, method, path, status, now).catch((e) => console.error("API key audit failed", e)));
+  }
+}
+
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     try {
       const agent = await handleAgentEndpoints(request, env, url);
       if (agent) return agent;
       if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
-      return await handleApi(request, env);
+      return await handleApi(request, env, ctx);
     } catch (err) {
       if (err instanceof HttpError) return json({ error: err.message }, err.status);
       console.error("Unhandled API error", err);

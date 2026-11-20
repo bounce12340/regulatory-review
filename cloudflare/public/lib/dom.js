@@ -51,6 +51,21 @@ export function toast(message, kind = "info") {
   setTimeout(() => el.remove(), kind === "error" ? 6000 : 3000);
 }
 
+/** A read-only text field with a Copy button (server URLs, keys shown once). */
+export function copyField(value, label) {
+  const input = h("input", { class: "input mono", value, readonly: true, "aria-label": label, onfocus: (e) => e.target.select() });
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast("已複製");
+    } catch {
+      input.select();
+      toast("請按 Ctrl+C（⌘C）複製", "error");
+    }
+  };
+  return h("div", { class: "copy-field" }, input, h("button", { type: "button", class: "btn", onclick: copy }, "複製"));
+}
+
 export function download(filename, content, mime) {
   const blob = content instanceof Blob ? content : new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);

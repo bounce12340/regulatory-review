@@ -1,17 +1,14 @@
 // AI agent connections (MCP): the server URL and how to add it to each AI tool, the user's
 // connections and personal access tokens, and — for admins — the company switch, every
 // connection in the company and recent agent activity.
-import { h, mount, toast, busy, field, confirmDialog } from "../lib/dom.js";
-import { api, isAdmin, canEdit } from "../lib/api.js";
+import { h, mount, toast, busy, field, confirmDialog, copyField } from "../lib/dom.js";
+import { api, isAdmin, canEdit, twTime as when } from "../lib/api.js";
 
 const SCOPE_LABEL = { read: "唯讀", "read write": "讀取＋寫回審查結果" };
 const TOOL_LABEL = {
   list_cases: "列出案件", get_case: "讀取案件", read_document: "讀取文件文字", search_documents: "搜尋文件",
   get_document_file: "取得原始檔", save_item_review: "寫回審查結果",
 };
-
-/** Taiwan time (UTC+8, no daylight saving), as "2026-11-20 14:05". */
-const when = (iso) => (iso ? new Date(Date.parse(iso) + 8 * 3600_000).toISOString().slice(0, 16).replace("T", " ") : "—");
 
 export async function renderConnect(main, _params, ctx) {
   const data = await api("GET", "/api/mcp");
@@ -61,20 +58,6 @@ function settingsSheet(data, ctx) {
     h("p", { class: "help", style: "margin-top:8px;max-width:72ch" },
       "文件內容會傳給成員所連接的 AI 服務（例如 Anthropic、OpenAI）處理，請先確認符合公司保密規範與客戶合約。關閉後所有連線立即暫停；重新開啟即恢復。下方可查看每個連線與最近的讀取紀錄。"),
   );
-}
-
-function copyField(value, label) {
-  const input = h("input", { class: "input mono", value, readonly: true, "aria-label": label, onfocus: (e) => e.target.select() });
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(value);
-      toast("已複製");
-    } catch {
-      input.select();
-      toast("請按 Ctrl+C（⌘C）複製", "error");
-    }
-  };
-  return h("div", { class: "copy-field" }, input, h("button", { type: "button", class: "btn", onclick: copy }, "複製"));
 }
 
 function setupSheet(url) {
