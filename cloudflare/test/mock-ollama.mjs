@@ -1,5 +1,8 @@
 // Minimal stand-in for Ollama's cloud chat API (POST /api/chat, NDJSON streaming), for
-// offline tests of the AI analysis path. Start it, then run `wrangler dev` with
+// offline tests of the AI analysis path. It also answers like an OpenAI-compatible service
+// (POST /v1/chat/completions, key "byok-openai-key") and like Anthropic's Messages API
+// (POST /v1/messages with SSE streaming, key "byok-anthropic-key"), for companies' own
+// AI services. Model "missing-model" answers 404; Anthropic model "refuse-model" refuses. Start it, then run `wrangler dev` with
 //   OLLAMA_API_KEY=test-key  AI_BASE_URL=http://127.0.0.1:8788
 // GET /__last returns the last request (headers + body) so tests can assert on its shape.
 //
@@ -35,6 +38,50 @@ const review = {
   fixes: ["補齊三批 6 個月長期與 6 個月加速安定性數據。"],
 };
 
+/** The reply text for a request: a key check, a per-item review or a gap report. */
+function replyText(contents, retry, model) {
+  const all = contents.join("\n");
+  if (all.includes("這是連線測試")) return "OK";
+  const payload = all.includes("## 審查門檻") ? review : result;
+  if (model === "mock-broken-once" && !retry) return "抱歉，以下是分析結果：缺少安全性試驗報告。";
+  return `以下是分析結果：\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``;
+}
+
+function openAiCompatible(body, req, res) {
+  const json = (status, data) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(data)); };
+  if (req.headers.authorization !== "Bearer byok-openai-key") return json(401, { error: { message: "Incorrect API key provided", type: "invalid_request_error" } });
+  if (body.model === "missing-model") return json(404, { error: { message: "The model `missing-model` does not exist", type: "invalid_request_error" } });
+  const retry = body.messages.some((m) => m.role === "assistant");
+  const text = replyText(body.messages.map((m) => m.content), retry, body.model);
+  json(200, {
+    id: "chatcmpl-mock", object: "chat.completion", model: `${body.model}-2026`,
+    choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 11000, completion_tokens: 800, total_tokens: 11800 },
+  });
+}
+
+function anthropicMessages(body, req, res) {
+  const json = (status, data) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(data)); };
+  // Current SDKs send the key as a bearer token; older ones as x-api-key.
+  const key = req.headers["x-api-key"] ?? (req.headers.authorization ?? "").replace(/^Bearer /, "");
+  if (key !== "byok-anthropic-key") return json(401, { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } });
+  if (body.model === "missing-model") return json(404, { type: "error", error: { type: "not_found_error", message: "model: missing-model" } });
+  const contents = [typeof body.system === "string" ? body.system : "", ...body.messages.map((m) => (typeof m.content === "string" ? m.content : ""))];
+  const retry = contents.some((c) => c.includes("<previous_reply>"));
+  const refuse = body.model === "refuse-model";
+  const text = refuse ? "" : replyText(contents, retry, body.model);
+  if (!body.stream) return json(400, { type: "error", error: { type: "invalid_request_error", message: "mock expects stream: true" } });
+  res.writeHead(200, { "Content-Type": "text/event-stream" });
+  const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify({ type: event, ...data })}\n\n`);
+  send("message_start", { message: { id: "msg_mock", type: "message", role: "assistant", model: body.model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 10000, output_tokens: 1 } } });
+  send("content_block_start", { index: 0, content_block: { type: "text", text: "" } });
+  for (let i = 0; i < text.length; i += 80) send("content_block_delta", { index: 0, delta: { type: "text_delta", text: text.slice(i, i + 80) } });
+  send("content_block_stop", { index: 0 });
+  send("message_delta", { delta: { stop_reason: refuse ? "refusal" : "end_turn", stop_sequence: null }, usage: { output_tokens: 700 } });
+  send("message_stop", {});
+  res.end();
+}
+
 http.createServer((req, res) => {
   if (req.method === "GET" && req.url === "/__last") {
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -46,6 +93,8 @@ http.createServer((req, res) => {
   req.on("end", () => {
     const body = JSON.parse(raw || "{}");
     last = { url: req.url, headers: req.headers, body };
+    if (req.url === "/v1/chat/completions") return openAiCompatible(body, req, res);
+    if (req.url === "/v1/messages") return anthropicMessages(body, req, res);
     if (req.url !== "/api/chat") {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "not found" }));

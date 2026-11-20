@@ -65,7 +65,7 @@ function settingsSheet(data, ctx) {
     h("h2", { class: "sheet-title" }, "公司設定"),
     h("label", { class: "check" }, h("input", { type: "checkbox", checked: data.enabled, onchange: toggle }), "允許成員建立 API 金鑰"),
     h("p", { class: "help", style: "margin-top:8px;max-width:72ch" },
-      "金鑰不能用來登入網頁、管理成員或建立其他金鑰與連線。停用或刪除成員時，他的金鑰會一併刪除。關閉後所有金鑰立即暫停；重新開啟即恢復。下方可查看每把金鑰與最近的使用紀錄。"),
+      "金鑰不能用來登入網頁、管理成員、變更 AI 模型設定，或建立其他金鑰與連線。停用或刪除成員時，他的金鑰會一併刪除。關閉後所有金鑰立即暫停；重新開啟即恢復。下方可查看每把金鑰與最近的使用紀錄。"),
   );
 }
 
@@ -109,7 +109,7 @@ for p in projects:
         h("thead", {}, h("tr", {}, ["方法", "路徑", "用途"].map((t) => h("th", {}, t)))),
         h("tbody", {}, ENDPOINTS.map(([m, path, what]) => h("tr", {},
           h("td", { class: "mono small" }, m), h("td", { class: "mono small" }, path), h("td", { class: "small" }, what)))))),
-      h("p", {}, "唯讀金鑰只能用 GET。讀取＋修改金鑰可以做到建立者在網頁上能做的事，但仍不能管理成員、密碼或金鑰與連線設定。")),
+      h("p", {}, "唯讀金鑰只能用 GET。讀取＋修改金鑰可以做到建立者在網頁上能做的事，但仍不能管理成員、密碼、AI 模型設定或金鑰與連線設定。")),
   );
 }
 

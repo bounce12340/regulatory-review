@@ -14,6 +14,8 @@ import {
   type ApiKeyPrincipal,
 } from "./apikeys";
 import { AnalysisError, analyzeDocument, MAX_FILES, MAX_TEXT_CHARS, reviewItem, type AiConfig } from "./ai";
+import { baseUrlProblem, companyAiRow, configFor, openKey, PROVIDERS, providerById, sealKey } from "./aisettings";
+import { checkConnection } from "./llm";
 import { handleMcp } from "./mcp";
 import {
   authorizationServerMetadata, authorize, CORS_HEADERS, createPersonalToken, oauthJson, principalFor, protectedResourceMetadata,
@@ -42,6 +44,13 @@ export interface Env {
   AI_BASE_URL?: string;
   /** Ollama cloud model name, as listed by https://ollama.com/api/tags. */
   AI_MODEL?: string;
+  /**
+   * Secret that encrypts companies' own AI service keys ("bring your own key"). Without it
+   * companies cannot set their own AI service. Changing it makes stored keys unreadable.
+   */
+  AI_KEY_SECRET?: string;
+  /** Local tests only: let companies point their AI service at http://localhost. */
+  AI_ALLOW_LOCAL_BASE_URL?: string;
   ALLOW_REGISTRATION?: string;
   SESSION_TTL_HOURS?: string;
   /** PBKDF2 iterations for new password hashes (10 000–100 000). See README for the CPU trade-off. */
@@ -1004,6 +1013,7 @@ async function deleteUser(env: Env, user: AuthUser, targetId: number): Promise<R
     env.DB.prepare("UPDATE upload_session SET created_by = NULL WHERE created_by = ?").bind(target.id),
     env.DB.prepare("UPDATE project_ectd SET updated_by = NULL WHERE updated_by = ?").bind(target.id),
     env.DB.prepare("UPDATE ectd_sequence SET created_by = NULL WHERE created_by = ?").bind(target.id),
+    env.DB.prepare("UPDATE company_ai SET updated_by = NULL WHERE updated_by = ?").bind(target.id),
     env.DB.prepare("DELETE FROM user WHERE id = ? AND company_id = ?").bind(target.id, user.company_id),
   ]);
   return listUsers(env, user);
@@ -1011,19 +1021,116 @@ async function deleteUser(env: Env, user: AuthUser, targetId: number): Promise<R
 
 // ── AI analysis ──────────────────────────────────────────────────────────────
 
-function aiConfig(env: Env): AiConfig | null {
+/** The system's own AI service (Ollama), used by companies that have not set their own. */
+function systemAiConfig(env: Env): AiConfig | null {
   if (!env.OLLAMA_API_KEY) return null;
   return {
+    protocol: "ollama",
     apiKey: env.OLLAMA_API_KEY,
     baseURL: env.AI_BASE_URL || "https://ollama.com",
     model: env.AI_MODEL || "deepseek-v4.1-flash",
+    source: "system",
   };
+}
+
+const AI_OFF = "AI 分析尚未啟用：請管理員在「AI 模型設定」設定公司自己的 AI 服務，或由系統管理者設定 OLLAMA_API_KEY。";
+
+/**
+ * The AI service a company's analysis runs on: its own, when set, else the system's.
+ * A company that set its own service never falls back to the system's, so its documents
+ * only go where it chose.
+ */
+async function aiConfigFor(env: Env, companyId: number): Promise<AiConfig> {
+  const row = await companyAiRow(env.DB, companyId);
+  if (row) {
+    const key = env.AI_KEY_SECRET ? await openKey(env.AI_KEY_SECRET, companyId, row.key_sealed) : null;
+    if (!key) throw new HttpError(503, "無法讀取公司的 AI 服務金鑰（系統加密設定已變更），請管理員在「AI 模型設定」重新輸入金鑰。");
+    return configFor(row, key);
+  }
+  const sys = systemAiConfig(env);
+  if (!sys) throw new HttpError(503, AI_OFF);
+  return sys;
+}
+
+/** What the browser may know about a company's AI service (never the key). */
+async function aiSummary(env: Env, companyId: number | null) {
+  const row = companyId ? await companyAiRow(env.DB, companyId) : null;
+  if (row) {
+    const p = providerById(row.provider)!;
+    return { ai_enabled: true, ai_model: row.model, ai_provider: p.label, ai_source: "company" as const };
+  }
+  const sys = systemAiConfig(env);
+  return { ai_enabled: Boolean(sys), ai_model: sys?.model ?? null, ai_provider: sys ? "Ollama 雲端" : null, ai_source: sys ? "system" as const : null };
+}
+
+async function aiSettings(env: Env, user: AuthUser): Promise<Response> {
+  const row = await companyAiRow(env.DB, user.company_id);
+  const sys = systemAiConfig(env);
+  return json({
+    byok_available: Boolean(env.AI_KEY_SECRET),
+    system: sys ? { provider: "Ollama 雲端", model: sys.model } : null,
+    company: row ? {
+      provider: row.provider, base_url: row.base_url, model: row.model, key_hint: row.key_hint,
+      updated_at: row.updated_at, updated_by_name: row.updated_by_name,
+    } : null,
+    active: await aiSummary(env, user.company_id),
+    providers: PROVIDERS,
+  });
+}
+
+/**
+ * Saves the company's own AI service after one short test call with the given key (or
+ * the stored key, when only the model or address changes for the same service).
+ */
+async function putAiSettings(request: Request, env: Env, user: AuthUser): Promise<Response> {
+  requireRole(user, "admin");
+  if (!env.AI_KEY_SECRET) throw new HttpError(503, "系統尚未設定 AI_KEY_SECRET，無法安全儲存公司的 AI 金鑰。");
+  const body = await readJson(request);
+  const provider = providerById(String(body.provider ?? ""));
+  if (!provider) throw new HttpError(400, "請選擇 AI 服務。");
+  const model = str(body.model, "模型名稱", { max: 200 });
+  if (!/^[\w.:/@+-]+$/.test(model)) throw new HttpError(400, "模型名稱只能包含英數字與 . : / @ + - _。");
+  const rawBase = str(body.base_url, "API 網址", { max: 300, required: provider.base_url === null }).replace(/\/+$/, "");
+  const baseUrl = rawBase && rawBase !== provider.base_url ? rawBase : null;
+  if (baseUrl) {
+    const problem = baseUrlProblem(baseUrl, env.AI_ALLOW_LOCAL_BASE_URL === "true");
+    if (problem) throw new HttpError(400, problem);
+  }
+  const existing = await companyAiRow(env.DB, user.company_id);
+  let apiKey = typeof body.api_key === "string" ? body.api_key.trim() : "";
+  if (apiKey && (apiKey.length > 500 || /\s/.test(apiKey))) throw new HttpError(400, "API 金鑰格式不正確。");
+  if (!apiKey) {
+    // Keep the stored key only for the same service and address it was given for.
+    if (!existing || existing.provider !== provider.id || existing.base_url !== baseUrl) throw new HttpError(400, "請輸入 API 金鑰。");
+    apiKey = (await openKey(env.AI_KEY_SECRET, user.company_id, existing.key_sealed)) ?? "";
+    if (!apiKey) throw new HttpError(400, "無法讀取已儲存的金鑰，請重新輸入 API 金鑰。");
+  }
+  const cfg = configFor({ provider: provider.id, base_url: baseUrl, model }, apiKey);
+  let tested: { model: string };
+  try {
+    tested = await checkConnection(cfg);
+  } catch (err) {
+    if (err instanceof AnalysisError) throw new HttpError(err.status === 503 ? 400 : err.status, `連線測試失敗，設定未儲存：${err.message}`);
+    throw err;
+  }
+  await env.DB.prepare(
+    `INSERT INTO company_ai (company_id, provider, base_url, model, key_sealed, key_hint, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(company_id) DO UPDATE SET provider = excluded.provider, base_url = excluded.base_url, model = excluded.model,
+       key_sealed = excluded.key_sealed, key_hint = excluded.key_hint, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+  ).bind(user.company_id, provider.id, baseUrl, model, await sealKey(env.AI_KEY_SECRET, user.company_id, apiKey), apiKey.slice(-4), user.id, nowIso()).run();
+  const res = await aiSettings(env, user);
+  return json({ ...(await res.json() as object), tested_model: tested.model });
+}
+
+async function deleteAiSettings(env: Env, user: AuthUser): Promise<Response> {
+  requireRole(user, "admin");
+  await env.DB.prepare("DELETE FROM company_ai WHERE company_id = ?").bind(user.company_id).run();
+  return aiSettings(env, user);
 }
 
 async function analyze(request: Request, env: Env, user: AuthUser): Promise<Response> {
   requireRole(user, "admin", "member");
-  const cfg = aiConfig(env);
-  if (!cfg) throw new HttpError(503, "AI 分析尚未啟用：管理員需設定 OLLAMA_API_KEY。");
   const body = await readJson(request, MAX_AI_BYTES);
   if (!isSchemaType(body.schema_type)) throw new HttpError(400, "不支援的申請類型。");
   // Either one document ({filename, text}) or several analysed together ({files: [...]}).
@@ -1042,6 +1149,7 @@ async function analyze(request: Request, env: Env, user: AuthUser): Promise<Resp
     throw new HttpError(413, `文件文字合計 ${total.toLocaleString()} 字元，超過單次分析上限 ${MAX_TEXT_CHARS.toLocaleString()} 字元，請減少文件或分次分析。`);
   }
   const input = { files };
+  const cfg = await aiConfigFor(env, user.company_id);
 
   try {
     return json(await analyzeDocument(cfg, body.schema_type, input));
@@ -1082,8 +1190,7 @@ async function reviewChecklistItem(env: Env, user: AuthUser, itemId: number): Pr
       summary = "此項目的文件都無法擷取文字（可能是掃描檔或不支援的格式），AI 無法審查內容。";
       fixes = ["改上傳含文字層的 PDF（或先做 OCR），再重新審查。"];
     } else {
-      const cfg = aiConfig(env);
-      if (!cfg) throw new HttpError(503, "AI 分析尚未啟用：管理員需設定 OLLAMA_API_KEY。");
+      const cfg = await aiConfigFor(env, user.company_id);
       try {
         const r = await reviewItem(cfg, {
           schema_name: SCHEMAS[project.schema_type]?.display_name_zh ?? project.schema_type,
@@ -1343,6 +1450,9 @@ const routes: Array<[string, RegExp, Handler]> = [
   ["PATCH", /^\/api\/users\/(\d+)$/, ({ request, env, user, params }) => updateUser(request, env, user, idParam(params[0]))],
   ["DELETE", /^\/api\/users\/(\d+)$/, ({ env, user, params }) => deleteUser(env, user, idParam(params[0]))],
   ["POST", /^\/api\/ai\/analyze$/, ({ request, env, user }) => analyze(request, env, user)],
+  ["GET", /^\/api\/ai\/settings$/, ({ env, user }) => aiSettings(env, user)],
+  ["PUT", /^\/api\/ai\/settings$/, ({ request, env, user }) => putAiSettings(request, env, user)],
+  ["DELETE", /^\/api\/ai\/settings$/, ({ env, user }) => deleteAiSettings(env, user)],
   ["GET", /^\/api\/mcp$/, ({ env, url, user }) => mcpOverview(env, url, user)],
   ["PATCH", /^\/api\/mcp\/settings$/, ({ request, env, url, user }) => updateMcpSettings(request, env, url, user)],
   ["POST", /^\/api\/mcp\/tokens$/, ({ request, env, user }) => createMcpToken(request, env, user)],
@@ -1367,11 +1477,11 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext): Pro
   // Public endpoints
   if (url.pathname === "/api/health") return json({ ok: true });
   if (url.pathname === "/api/config" && method === "GET") {
-    const cfg = aiConfig(env);
+    // Signed-in users see their company's AI service; the sign-in page sees the system's.
+    const viewer = await currentUser(request, env);
     return json({
       registration_enabled: (env.ALLOW_REGISTRATION ?? "true") === "true",
-      ai_enabled: Boolean(cfg),
-      ai_model: cfg?.model ?? null,
+      ...(await aiSummary(env, viewer?.company_id ?? null)),
       attachments: {
         max_bytes: MAX_ATTACHMENT_BYTES, single_max_bytes: SINGLE_UPLOAD_MAX_BYTES, part_bytes: UPLOAD_PART_BYTES,
         per_item: MAX_ATTACHMENTS_PER_ITEM, case_quota_bytes: caseQuotaBytes(env), extensions: Object.keys(ATTACHMENT_TYPES),

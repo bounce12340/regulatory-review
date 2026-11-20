@@ -833,3 +833,8 @@ table.endpoints td.mono { white-space: nowrap; }
 .consent-facts dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
 .consent .notice { margin: 12px 0; }
 .consent .btn-row { margin-top: 18px; }
+
+/* Label–value lists (AI model settings). */
+dl.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 20px; margin: 0; font-size: var(--t-sm); }
+dl.kv dt { color: var(--ink-2); }
+dl.kv dd { margin: 0; overflow-wrap: anywhere; }

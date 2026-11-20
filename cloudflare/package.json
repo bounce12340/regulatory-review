@@ -15,6 +15,7 @@
     "test:e2e": "node test/e2e-api.mjs",
     "test:e2e:mcp": "node test/e2e-mcp.mjs",
     "test:e2e:apikeys": "node test/e2e-apikeys.mjs",
+    "test:e2e:byok": "node test/e2e-ai-byok.mjs",
     "vendor:pdfjs": "node scripts/vendor-pdfjs.mjs"
   },
   "devDependencies": {
@@ -25,5 +26,8 @@
     "vitest": "^5.0.3",
     "wrangler": "^4.145.0",
     "yaml": "^2.9.1"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "1.6.0"
   }
 }

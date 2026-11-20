@@ -1,16 +1,18 @@
 /**
- * AI document gap analysis (port of ai/gap_analyzer.py + ai/llm_client.py), run on
- * Ollama's cloud API (POST {AI_BASE_URL}/api/chat).
+ * AI document gap analysis (port of ai/gap_analyzer.py + ai/llm_client.py): the prompts
+ * and the parsing of model replies. The model call itself is in llm.ts, which runs on the
+ * system's Ollama account or on the AI service a company configured with its own key.
  *
- * The API key lives only in the Worker (secret OLLAMA_API_KEY); the browser never sees
- * it. Every file — PDF, Word, Excel, text — is turned into text in the browser first,
- * because Ollama does not accept PDF documents.
+ * Keys live only in the Worker; the browser never sees them. Every file — PDF, Word,
+ * Excel, text — is turned into text in the browser first, so any text model can read it.
  */
 
+import { AnalysisError, chat, type AiConfig, type ChatMessage } from "./llm";
 import { SCHEMAS, type Schema } from "./schemas";
 
+export { AnalysisError, type AiConfig } from "./llm";
+
 export const MAX_TEXT_CHARS = 100_000;
-const REQUEST_TIMEOUT_MS = 5 * 60_000;
 const FIELD_MAX = 500;
 
 const SYSTEM_PROMPT = `你是一位資深的台灣 TFDA（食品藥物管理署）法規事務專家，熟悉藥品、食品及醫療器材查驗登記實務。
@@ -115,19 +117,6 @@ export function formatRequirements(schema: Schema): string {
     .join("\n");
 }
 
-export class AnalysisError extends Error {
-  constructor(message: string, readonly status = 502) {
-    super(message);
-  }
-}
-
-export interface AiConfig {
-  apiKey: string;
-  baseURL: string;
-  model: string;
-}
-
-type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 type Report = Omit<GapReport, "filename" | "files" | "schema_type" | "schema_type_zh" | "model" | "token_usage">;
 
 export async function analyzeDocument(cfg: AiConfig, schemaType: string, input: AnalysisInput): Promise<GapReport> {
@@ -178,80 +167,6 @@ export async function analyzeDocument(cfg: AiConfig, schemaType: string, input: 
     model: reply.model,
     token_usage: reply.usage,
   };
-}
-
-interface ChatReply {
-  content: string;
-  model: string;
-  usage: { input_tokens: number; output_tokens: number };
-}
-
-/** Streams one /api/chat call (NDJSON) and returns the whole reply; adds to `prior` usage. */
-async function chat(cfg: AiConfig, messages: ChatMessage[], prior = { input_tokens: 0, output_tokens: 0 }): Promise<ChatReply> {
-  let res: Response;
-  try {
-    res = await fetch(`${cfg.baseURL.replace(/\/+$/, "")}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.apiKey}` },
-      // Streaming keeps the connection busy on long documents; we only keep the final text.
-      body: JSON.stringify({ model: cfg.model, messages, stream: true, options: { temperature: 0.2 } }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "TimeoutError") throw new AnalysisError("AI 服務回應逾時，請改上傳較小的文件或稍後再試。", 504);
-    throw new AnalysisError("無法連線至 AI 服務，請稍後再試。");
-  }
-  if (!res.ok) {
-    const detail = (await res.text().catch(() => "")).slice(0, 300);
-    if (res.status === 401 || res.status === 403) throw new AnalysisError("AI 服務金鑰無效，請管理員檢查 OLLAMA_API_KEY。", 503);
-    if (res.status === 404) throw new AnalysisError(`找不到 AI 模型「${cfg.model}」，請管理員檢查 AI_MODEL。`, 503);
-    if (res.status === 429) throw new AnalysisError("AI 服務請求過於頻繁或已達用量上限，請稍後再試。", 429);
-    if (res.status === 400) throw new AnalysisError(`AI 服務拒絕此請求：${errorMessage(detail)}`, 400);
-    throw new AnalysisError(`AI 服務錯誤（${res.status}），請稍後再試。`);
-  }
-
-  let content = "";
-  let model = cfg.model;
-  let doneReason = "";
-  const usage = { ...prior };
-  for await (const line of ndjsonLines(res.body!)) {
-    let chunk: Record<string, unknown>;
-    try { chunk = JSON.parse(line); } catch { continue; }
-    if (typeof chunk.error === "string") throw new AnalysisError(`AI 服務錯誤：${chunk.error}`);
-    const msg = chunk.message as { content?: string } | undefined;
-    if (typeof msg?.content === "string") content += msg.content;
-    if (typeof chunk.model === "string") model = chunk.model;
-    if (chunk.done) {
-      doneReason = String(chunk.done_reason ?? "");
-      usage.input_tokens += Number(chunk.prompt_eval_count ?? 0);
-      usage.output_tokens += Number(chunk.eval_count ?? 0);
-    }
-  }
-  if (doneReason === "length") {
-    throw new AnalysisError("AI 回應超過長度上限而被截斷，請改上傳較小的文件或分段分析。", 422);
-  }
-  return { content, model, usage };
-}
-
-async function* ndjsonLines(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
-  const reader = body.pipeThrough(new TextDecoderStream()).getReader();
-  let buf = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += value;
-    let nl;
-    while ((nl = buf.indexOf("\n")) >= 0) {
-      const line = buf.slice(0, nl).trim();
-      buf = buf.slice(nl + 1);
-      if (line) yield line;
-    }
-  }
-  if (buf.trim()) yield buf.trim();
-}
-
-function errorMessage(body: string): string {
-  try { return String(JSON.parse(body).error ?? body); } catch { return body || "未知錯誤"; }
 }
 
 /** Pulls the JSON object out of a model reply (tolerates code fences, preambles, think tags). */

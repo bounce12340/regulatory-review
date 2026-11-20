@@ -21,8 +21,7 @@ export async function renderAi(main, _params, ctx) {
 
   if (!state.config.ai_enabled) {
     mount(main, header, h("div", { class: "notice warn" },
-      "AI 分析尚未啟用。請管理員在 Cloudflare 為這個 Worker 設定密鑰 OLLAMA_API_KEY，例如執行 ",
-      h("code", {}, "npx wrangler secret put OLLAMA_API_KEY"), "。"));
+      "AI 分析尚未啟用。請公司管理員在「", h("a", { href: "#/ai-settings" }, "AI 模型設定"), "」設定公司自己的 AI 服務與金鑰。"));
     return;
   }
   if (!canEdit()) {
@@ -123,7 +122,7 @@ export async function renderAi(main, _params, ctx) {
           field("申請類型", schemaSelect, "AI 會用這個類型的文件清單逐項比對"),
           analyzeBtn,
           h("p", { class: "help", style: "margin-top:12px" },
-            `使用模型 ${state.config.ai_model}。文件會先在你的瀏覽器轉成文字，再傳送到 Ollama 雲端分析，請勿上傳未經授權的機密資料。`),
+            `使用 ${state.config.ai_provider} 的 ${state.config.ai_model}${state.config.ai_source === "company" ? "（公司自己的金鑰）" : ""}。文件會先在你的瀏覽器轉成文字，再傳送到該 AI 服務分析，請勿上傳未經授權的機密資料。`),
           h("p", { class: "help" }, "整份申請資料超過上限時，可在案件頁用「批次上傳」放入各檢查項目，再執行「AI 全案審查」逐項審查。"),
         ),
       ),

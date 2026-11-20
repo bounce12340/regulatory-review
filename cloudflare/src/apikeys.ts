@@ -45,14 +45,15 @@ export async function apiKeyPrincipal(db: D1Database, key: string, now: string):
 
 /**
  * Paths a key may never reach, whatever its scope: signing in and out, passwords, members,
- * and the settings that hand out access (agent connections and API keys themselves). A
- * leaked key therefore cannot mint more access or lock people out.
+ * the settings that hand out access (agent connections and API keys themselves), and the
+ * company's AI service, which decides where document text is sent. A leaked key therefore
+ * cannot mint more access, lock people out, or redirect documents to another endpoint.
  */
-const KEY_FORBIDDEN = /^\/api\/(auth\/(?!me$)|users(\/|$)|mcp(\/|$)|api-keys(\/|$))/;
+const KEY_FORBIDDEN = /^\/api\/(auth\/(?!me$)|users(\/|$)|mcp(\/|$)|api-keys(\/|$)|ai\/settings(\/|$))/;
 
 /** Why a key may not make this request, or null when it may. */
 export function keyRequestProblem(scope: string, method: string, path: string): string | null {
-  if (KEY_FORBIDDEN.test(path)) return "API 金鑰不能用於登入、帳號、成員或連線設定，請在網頁上操作。";
+  if (KEY_FORBIDDEN.test(path)) return "API 金鑰不能用於登入、帳號、成員、AI 服務或連線設定，請在網頁上操作。";
   if (scope !== "read write" && method !== "GET" && method !== "HEAD") return "此 API 金鑰為唯讀，不能修改資料。";
   return null;
 }

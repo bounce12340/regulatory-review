@@ -25,10 +25,12 @@ describe("API key requests", () => {
       ["POST", "/api/auth/login"], ["POST", "/api/auth/logout"], ["POST", "/api/auth/password"], ["GET", "/api/auth/mex"],
       ["GET", "/api/users"], ["PATCH", "/api/users/2"], ["GET", "/api/mcp"], ["POST", "/api/mcp/tokens"],
       ["GET", "/api/api-keys"], ["POST", "/api/api-keys"], ["DELETE", "/api/api-keys/1"], ["PATCH", "/api/api-keys/settings"],
+      ["GET", "/api/ai/settings"], ["PUT", "/api/ai/settings"], ["DELETE", "/api/ai/settings"],
     ]) {
       expect(keyRequestProblem("read write", m, path), `${m} ${path}`).toMatch(/不能/);
     }
     expect(keyRequestProblem("read", "GET", "/api/auth/me")).toBeNull();
     expect(keyRequestProblem("read", "GET", "/api/users-report")).toBeNull();
+    expect(keyRequestProblem("read write", "POST", "/api/ai/analyze")).toBeNull();
   });
 });

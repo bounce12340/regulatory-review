@@ -144,6 +144,8 @@ await step("keys never reach sign-in, members or access settings", async () => {
     ["PATCH", "/api/api-keys/settings", { enabled: false }], ["POST", "/api/mcp/tokens", { name: "x", scope: "read", days: 30 }],
     ["POST", "/api/auth/password", { current_password: "password-123", new_password: "password-456" }],
     ["POST", "/api/auth/logout", {}],
+    ["GET", "/api/ai/settings"], ["PUT", "/api/ai/settings", { provider: "openai_compatible", model: "x", base_url: "https://attacker.example/v1", api_key: "k" }],
+    ["DELETE", "/api/ai/settings"],
   ]) {
     const r = await withKey(adminWrite, m, path, body);
     assert.equal(r.status, 403, `${m} ${path}`);
