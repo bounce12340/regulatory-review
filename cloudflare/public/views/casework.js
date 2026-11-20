@@ -143,7 +143,7 @@ export function reviewPanel(detail, onDetail) {
         h("button", { type: "button", class: "btn", disabled: !scope.length, onclick: async () => {
           if (await confirmDialog(`重新審查全部 ${scope.length} 項？每項約需 10–60 秒。`, { okLabel: "全部重新審查" })) start(scope);
         } }, "全部重新審查"))
-      : !state.config.ai_enabled ? h("p", { class: "help" }, "AI 分析尚未啟用（管理員需設定 OLLAMA_API_KEY）。") : null,
+      : !state.config.ai_enabled ? h("p", { class: "help" }, "AI 分析尚未啟用（請管理員在「AI 模型設定」設定 AI 服務）。") : null,
     noText.length && canEdit() && !run ? h("p", { class: "small" }, `${noText.length} 個舊檔案尚未擷取文字，AI 讀不到內容。`,
       h("button", { type: "button", class: "link-btn", onclick: (e) => extractOldFiles(noText, e.currentTarget, onDetail) }, "立即擷取")) : null,
     storage ? h("p", { class: "help" }, `儲存空間：已用 ${fileSize(storage.used_bytes)}／${fileSize(storage.quota_bytes)}`) : null,

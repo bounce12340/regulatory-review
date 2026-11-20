@@ -29,6 +29,9 @@ export function fileSize(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+/** Taiwan time (UTC+8, no daylight saving), as "2026-11-20 14:05"; "—" when empty. */
+export const twTime = (iso) => (iso ? new Date(Date.parse(iso) + 8 * 3600_000).toISOString().slice(0, 16).replace("T", " ") : "—");
+
 const prefetched = new Map();
 
 /** Starts a GET early; the next api("GET", path) uses the result instead of asking again. */

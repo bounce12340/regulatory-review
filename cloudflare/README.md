@@ -27,10 +27,11 @@ TFDA 查驗登記文件審查與進度追蹤平台，部署在 **Cloudflare Work
 | AI 全案審查 | 上傳時在瀏覽器把 PDF／Word／Excel 轉成文字存起來；AI 依每項的審查門檻逐條判定「符合／需修改／不足」，無檔案為「缺件」、掃描檔為「無法讀取」，並列出需補件／修正事項。只重審檔案有變更的項目；可依 AI 結果篩選清單。新藥案件範圍為 Module 1、Module 3 與全案一致性（不含 M4／M5） |
 | 風險自動判定 | 範本項目的風險依 `config/regulatory_schemas.yaml` 的 `risk_rules` 隨狀態自動計算；自訂項目可手動設定 |
 | 時程 / 多專案比較 | 截止日倒數、完成度與時程消耗對照、健康雷達圖 |
-| AI 文件分析 | 一次上傳一份或多份（最多 20 份、合計 10 萬字）含文字的 PDF、Word .docx、Excel .xlsx、純文字 → 瀏覽器轉成文字 → Ollama 雲端模型把多份文件視為同一申請案，逐項比對檢查清單 → 缺口報告（註明依據檔案）。整套資料超過上限時改用案件頁的批次上傳＋AI 全案審查 |
+| AI 文件分析 | 一次上傳一份或多份（最多 20 份、合計 10 萬字）含文字的 PDF、Word .docx、Excel .xlsx、純文字 → 瀏覽器轉成文字 → 公司設定的 AI 模型（未設定時為系統的 Ollama 雲端模型）把多份文件視為同一申請案，逐項比對檢查清單 → 缺口報告（註明依據檔案）。整套資料超過上限時改用案件頁的批次上傳＋AI 全案審查 |
 | eCTD 打包 | 依 TFDA「藥品查驗登記電子通用技術文件指引」eCTD-R2.1 把案件的 PDF 打包成送件 ZIP：填寫 tw-envelope（取號號碼、序列、送件目的與種類、Tier 1–5、申請者、藥品名稱、INN 等），每個附件指定 CTD 節點（Module 1 依附件一、Module 2–5 依 ICH Appendix 4）與頁面標題，系統自動命名檔案與資料夾，產生 tw-regional.xml、index.xml、index-md5.txt 與 util 檔（ICH 與 TW 的 DTD、MOD、XSL，checksum 與公告值一致），以 ZIP64 寫出（Chrome／Edge 直接寫入磁碟，6 GB 以上可用），完成後自動驗證。Module 4／5（表十一、表十二）的試驗報告依試驗分組：每份文件填試驗名稱，同一試驗放在以該名稱為標題的延伸節點（node extension）下；Module 5 每個試驗另有資料夾，5.3.5 依適應症建立資料夾並帶 indication 屬性 |
 | eCTD 補件（生命週期） | 每次產生的序列會記錄其內容（leaf ID 依序列與附件固定，重新產生不會改變）；也可匯入實際送出的 ZIP 作為紀錄。製作補件序列時，已送出的文件預設不再放入，改正後的文件可選擇「替換」先前文件（operation="replace"、modified-file 指向原 leaf；Module 4／5 的替換文件自動沿用原文件的試驗，放在同一延伸節點），不再需要的文件可勾選「刪除」（operation="delete"、無檔案、checksum 空白）；並檢查序列不可跳號、UUID 須一致。tw-regional.xml 內 leaf 的 modified-file 以該 XML 所在位置為基準（TFDA 未公布範例，依 EU Module 1 慣例） |
 | eCTD 驗證 | 上傳任何 eCTD 的 ZIP 或資料夾，在瀏覽器內依「藥品查驗登記電子通用技術文件驗證指引」eCTD-V-R2.1 檢查規則 A–P：util 檔 checksum、index.xml 與 tw-regional.xml 的 DTD 驗證、MD5、envelope、命名與路徑長度、未引用檔案、空資料夾、PDF 版本與損毀等，區分 P/F（不予收件）與 BP（提醒），可下載報告。生命週期規則（I.8、K.9、K.10、K.12、M.2、M.4）在同一次上傳含先前序列時檢查；在打包頁會用案件的序列紀錄檢查 |
+| AI 模型設定（自備金鑰） | 公司管理員可改用公司自己的 AI 服務與 API 金鑰：Anthropic Claude、OpenAI、Google Gemini、Ollama 雲端，或其他 OpenAI 相容服務（自訂網址）。儲存前先以短請求測試金鑰與模型；金鑰以 AES-GCM 加密儲存、只顯示末 4 碼。設定後 AI 文件分析與 AI 全案審查都改用該服務，費用依公司自己的合約。詳見下方「AI 模型設定」 |
 | AI 代理連線（MCP） | 讓 Claude、ChatGPT、Claude Code、Cursor 等外部 AI 工具以 MCP 連到 `/mcp`，用它們自己的模型讀取案件、檢查清單（含審查門檻）與上傳文件的文字或 PDF／圖片原始檔，並可在授權時允許後把審查結果寫回檢查項目。每人以自己的帳號授權（OAuth：網頁登入＋同意頁），或建立個人存取權杖。公司管理員須先開啟，可查看與撤銷所有連線，並看到每次讀取的紀錄。詳見下方「AI 代理連線（MCP）」 |
 | 匯出 | Markdown、CSV（Excel 可開）、JSON、列印 / 存成 PDF |
 
@@ -62,7 +63,8 @@ npm ci
 npx wrangler login                       # 瀏覽器授權
 npx wrangler r2 bucket create regulatory-review-files   # 附件儲存（只需一次）
 npm run deploy                           # 部署 + 建立/遷移 D1
-npx wrangler secret put OLLAMA_API_KEY  # 貼上 Ollama API 金鑰
+npx wrangler secret put OLLAMA_API_KEY  # 貼上 Ollama API 金鑰（系統預設 AI 服務，可略過）
+openssl rand -base64 32 | npx wrangler secret put AI_KEY_SECRET   # 讓公司可設定自己的 AI 金鑰
 ```
 
 ### 自訂網域
@@ -97,7 +99,8 @@ Secrets（`npx wrangler secret put <NAME>` 或 Dashboard 設定）：
 
 | Secret | 說明 |
 |--------|------|
-| `OLLAMA_API_KEY` | 必填才能使用 AI 分析 |
+| `OLLAMA_API_KEY` | 系統預設的 AI 服務。未設定時，只有自行設定 AI 服務的公司能使用 AI 分析 |
+| `AI_KEY_SECRET` | 加密公司自備 AI 金鑰用的長隨機字串（例如 `openssl rand -base64 32`）。未設定時無法使用「AI 模型設定」；**設定後不要更換**，否則已儲存的金鑰會無法解密，需各公司重新輸入 |
 
 ## 本機開發
 
@@ -117,11 +120,37 @@ npm test            # 單元測試：報告邏輯、密碼雜湊、TS 範本與 
 # 端到端 API 與 MCP 測試（需先 npm run dev）
 npm run test:e2e
 npm run test:e2e:mcp
+npm run test:e2e:byok   # 需在 .dev.vars 設定 AI_KEY_SECRET 與 AI_ALLOW_LOCAL_BASE_URL=true
 ```
 
 `test/ai.test.ts` 檢查 AI 回應的 JSON 解析與修正（Ollama 雲端不強制回應格式，所以伺服器端會自行驗證，格式錯誤時自動重試一次）。
 
 `test/schemas.test.ts` 會讀取 `../config/regulatory_schemas.yaml`，比對 `src/schemas.ts` 的每一個項目、類別與風險規則。修改 YAML 後若沒同步更新 TS，測試就會失敗。GitHub Actions（`.github/workflows/cloudflare.yml`）在每次 PR 時都會跑上述所有測試，並搭配本機 D1 與模擬的 AI 後端執行 API 端到端測試。
+
+## AI 模型設定（公司自備金鑰）
+
+公司管理員在「AI 模型設定」選擇 AI 服務、模型並貼上公司自己的 API 金鑰。儲存前會先送一個很短的測試請求，確認金鑰與模型可用；失敗時不會儲存。設定後，該公司的「AI 文件分析」與「AI 全案審查」都改用這個服務；其他公司不受影響。改回系統預設時，金鑰會一併刪除。
+
+| AI 服務 | 呼叫方式 | 預設網址 |
+| - | - | - |
+| Anthropic Claude | 官方 SDK `@anthropic-ai/sdk`（Messages API，串流取得完整回應） | `https://api.anthropic.com` |
+| OpenAI | Chat Completions | `https://api.openai.com/v1` |
+| Google Gemini | Gemini 的 OpenAI 相容端點 | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| Ollama 雲端 | `/api/chat` | `https://ollama.com` |
+| 其他 OpenAI 相容服務 | Chat Completions | 必填，自訂 |
+
+說明：
+- Claude 預設模型為 `claude-opus-5-5`，另可選 `claude-sonnet-5-5`、`claude-haiku-5-5`，也可填其他模型 ID。
+  - 支援的模型會設定 effort（分析用 `high`，連線測試用 `low`）。
+  - Opus 5.5 等支援的模型會開啟伺服器端的拒答備援（`fallbacks: "default"`）。
+  - 模型因安全政策拒答時，會顯示明確的錯誤訊息。
+- OpenAI、Gemini 與其他服務的模型名稱變動頻繁，請依各服務目前提供的名稱填寫。
+- 所有服務都不送 `temperature`：部分新模型只接受預設值。
+- 自訂 API 網址只接受 `https://` 的公開網域，不接受 IP 位址或內部網路名稱。
+- 金鑰以 `AI_KEY_SECRET` 衍生的 AES-GCM 金鑰加密，並綁定公司 ID，資料庫被複製也無法直接取得金鑰；畫面與 API 只回傳末 4 碼。
+- 公司設定了自己的服務後，就不會改用系統預設服務。這確保文件只送到公司選擇的服務；金鑰無法解密時會直接報錯。
+
+資料注意：文件文字會傳到公司所選的 AI 服務處理，請先確認符合公司保密規範、客戶合約與該服務的資料使用條款。
 
 ## AI 代理連線（MCP）
 

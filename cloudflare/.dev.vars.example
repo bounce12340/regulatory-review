@@ -1,3 +1,6 @@
 # Copy to .dev.vars for local `wrangler dev`. Never commit .dev.vars.
 # Ollama API key from https://ollama.com/settings/keys (AI analysis is off without it).
 OLLAMA_API_KEY=
+# Any long random string; encrypts companies' own AI service keys ("AI 模型設定").
+# Keep it unchanged once keys are stored. Generate one with: openssl rand -base64 32
+AI_KEY_SECRET=
