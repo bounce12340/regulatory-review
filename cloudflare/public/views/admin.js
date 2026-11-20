@@ -98,7 +98,7 @@ export async function renderAccount(main) {
           try {
             await busy(e.submitter, () => api("POST", "/api/auth/password", { current_password: data.current_password, new_password: data.new_password }));
             e.target.reset();
-            toast("已更新密碼，其他裝置上的登入已失效。");
+            toast("已更新密碼。其他裝置的登入、你的 AI 代理連線與 API 金鑰都已撤銷，需要時請重新建立。");
           } catch (err) { error.textContent = err.message; }
         },
       },

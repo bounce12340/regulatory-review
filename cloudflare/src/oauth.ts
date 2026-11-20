@@ -13,6 +13,7 @@
  * Only SHA-256 hashes of codes and tokens are stored.
  */
 
+import { BodyTooLarge, readTextLimited } from "./body";
 import { hashToken, newSessionToken } from "./auth";
 
 export const SCOPES = ["read", "write"] as const;
@@ -22,6 +23,9 @@ const CODE_TTL_SECONDS = 300;
 const CIMD_FRESH_MS = 3600_000;
 const CIMD_STALE_OK_MS = 24 * 3600_000;
 const MAX_REDIRECT_URIS = 10;
+/** New dynamically registered clients that have not connected yet, per hour: per address, and in total. */
+const MAX_NEW_CLIENTS_PER_IP_HOUR = 20;
+const MAX_NEW_CLIENTS_PER_HOUR = 2000;
 
 /** Prefixes tell the token kinds apart without a lookup: personal, access, refresh. */
 export const TOKEN_PREFIX = { personal: "rrp_", access: "rra_", refresh: "rrr_" } as const;
@@ -168,7 +172,7 @@ export function clientFromMetadataDocument(clientId: string, doc: unknown): Omit
   }
   const d = doc as Record<string, unknown>;
   const redirects = Array.isArray(d.redirect_uris) ? d.redirect_uris.filter((r): r is string => typeof r === "string") : [];
-  if (!redirects.length || redirects.length > MAX_REDIRECT_URIS || !redirects.every(redirectAllowed)) {
+  if (!redirects.length || redirects.length > MAX_REDIRECT_URIS || !redirects.every((r) => r.length <= 2000 && redirectAllowed(r))) {
     throw new OAuthError("invalid_client", "用戶端 metadata 文件的 redirect_uris 無效。");
   }
   const clientUri = typeof d.client_uri === "string" && /^https:\/\//.test(d.client_uri) ? d.client_uri.slice(0, 500) : null;
@@ -180,16 +184,20 @@ export function clientFromMetadataDocument(clientId: string, doc: unknown): Omit
   };
 }
 
-/** Fetches a Client ID Metadata Document (5 s, 64 KB, no redirects). */
+/**
+ * Fetches a Client ID Metadata Document (5 s, 64 KB, no redirects). Workers do not accept
+ * redirect: "error", so redirects are taken as "manual" and a 3xx answer is refused.
+ */
 async function fetchClientMetadata(clientId: string): Promise<Omit<ClientInfo, "kind">> {
   const problem = clientIdUrlProblem(clientId);
   if (problem) throw new OAuthError("invalid_client", problem);
   let res: Response;
   try {
-    res = await fetch(clientId, { headers: { Accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(5000) });
+    res = await fetch(clientId, { headers: { Accept: "application/json" }, redirect: "manual", signal: AbortSignal.timeout(5000) });
   } catch {
     throw new OAuthError("invalid_client", "無法取得用戶端的 metadata 文件。");
   }
+  if (res.status >= 300 && res.status < 400) throw new OAuthError("invalid_client", "用戶端 metadata 文件的網址回應轉址；client_id 必須是文件的最終網址。");
   if (!res.ok || !res.body) throw new OAuthError("invalid_client", `用戶端 metadata 文件回應 ${res.status}。`);
   // Read at most 64 KB, whatever the server sends.
   const reader = res.body.getReader();
@@ -240,11 +248,10 @@ async function resolveClient(db: D1Database, clientId: string): Promise<ClientIn
 
 /** POST /oauth/register — Dynamic Client Registration (RFC 7591), public clients only. */
 export async function registerClient(request: Request, db: D1Database): Promise<Response> {
+  const ip = request.headers.get("CF-Connecting-IP");
   let body: Record<string, unknown>;
   try {
-    const text = await request.text();
-    if (text.length > 16 * 1024) throw new Error();
-    body = JSON.parse(text);
+    body = JSON.parse(await readTextLimited(request, 16 * 1024));
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error();
   } catch {
     return oauthJson({ error: "invalid_client_metadata", error_description: "請以 JSON 送出用戶端資料。" }, 400);
@@ -263,14 +270,23 @@ export async function registerClient(request: Request, db: D1Database): Promise<
   }
   const name = typeof body.client_name === "string" && body.client_name.trim() ? body.client_name.trim().slice(0, 120) : "未命名的 AI 代理";
   const clientUri = typeof body.client_uri === "string" && /^https:\/\//.test(body.client_uri) ? body.client_uri.slice(0, 500) : null;
+  // Registration is open by design (RFC 7591), so cap how fast unused clients can pile up.
+  const recent = await db.prepare(
+    `SELECT COUNT(*) AS total, COALESCE(SUM(registered_ip IS ?1 AND ?1 IS NOT NULL), 0) AS from_ip
+       FROM oauth_client WHERE kind = 'dcr' AND created_at > ?2
+        AND client_id NOT IN (SELECT client_id FROM mcp_grant WHERE client_id IS NOT NULL)`,
+  ).bind(ip, new Date(Date.now() - 3600_000).toISOString()).first<{ total: number; from_ip: number }>();
+  if ((recent?.from_ip ?? 0) >= MAX_NEW_CLIENTS_PER_IP_HOUR || (recent?.total ?? 0) >= MAX_NEW_CLIENTS_PER_HOUR) {
+    return oauthJson({ error: "temporarily_unavailable", error_description: "註冊太頻繁，請稍後再試。" }, 429);
+  }
   const clientId = `rrc_${newSessionToken()}`;
   await db.batch([
-    // Registrations that never led to a connection are dropped after a week.
-    db.prepare(`DELETE FROM oauth_client WHERE kind = 'dcr' AND created_at < ?
+    // Clients that never led to a connection are dropped after a week.
+    db.prepare(`DELETE FROM oauth_client WHERE created_at < ?
                 AND client_id NOT IN (SELECT client_id FROM mcp_grant WHERE client_id IS NOT NULL)`)
       .bind(new Date(Date.now() - 7 * 86400_000).toISOString()),
-    db.prepare("INSERT INTO oauth_client (client_id, kind, client_name, client_uri, redirect_uris) VALUES (?, 'dcr', ?, ?, ?)")
-      .bind(clientId, name, clientUri, JSON.stringify(redirects)),
+    db.prepare("INSERT INTO oauth_client (client_id, kind, client_name, client_uri, redirect_uris, registered_ip) VALUES (?, 'dcr', ?, ?, ?, ?)")
+      .bind(clientId, name, clientUri, JSON.stringify(redirects), ip),
   ]);
   return oauthJson({
     client_id: clientId,
@@ -330,10 +346,27 @@ export async function authorize(
   request: Request, db: D1Database, url: URL, user: SessionUser | null, sessionToken: string | null,
 ): Promise<Response> {
   const isPost = request.method === "POST";
-  const form = isPost ? new URLSearchParams(await request.text()) : url.searchParams;
+  let form = url.searchParams;
+  if (isPost) {
+    try {
+      form = new URLSearchParams(await readTextLimited(request, 16 * 1024));
+    } catch (err) {
+      if (err instanceof BodyTooLarge) return page("無法連線", "<p>請求內容過大。</p>", 413);
+      throw err;
+    }
+  }
   const p = readAuthorizeParams(form);
 
-  // Until the client and redirect URI check out, errors are shown here, never redirected.
+  // Sign-in comes first, so anonymous visitors cannot make this server fetch or store
+  // client metadata, or bounce them anywhere.
+  if (!user || !sessionToken) {
+    if (isPost) return page("請重新登入", "<p>登入已逾時，請回到 AI 工具重新連線。</p>", 401);
+    return new Response(null, { status: 302, headers: { Location: `/?next=${encodeURIComponent(url.pathname + url.search)}`, "Cache-Control": "no-store" } });
+  }
+
+  // Until the user has seen the consent screen, every problem is shown here and never
+  // redirected: anyone can register a client with any redirect URI, so redirecting errors
+  // would turn this endpoint into an open redirector (RFC 9700 §4.11.2).
   let client: ClientInfo;
   try {
     client = await resolveClient(db, p.client_id);
@@ -344,28 +377,17 @@ export async function authorize(
     return page("無法連線", "<p>這個連線要求的返回網址（redirect_uri）沒有登記在用戶端資料中，為安全起見已停止。</p>", 400);
   }
   const iss = issuerOf(url);
-  const fail = (error: string, description: string) =>
-    redirectWith(p.redirect_uri, { error, error_description: description, state: p.state, iss });
-  if (p.response_type !== "code") return fail("unsupported_response_type", "只支援 response_type=code。");
+  const reject = (description: string) =>
+    page("無法連線", `<p>${esc(description)}</p><p class="help">請回到 AI 工具重新新增連線；問題持續時請聯絡該工具的提供者。</p>`, 400);
+  if (p.response_type !== "code") return reject("連線要求有誤：只支援 response_type=code。");
   if (!p.code_challenge || p.code_challenge_method !== "S256" || !/^[A-Za-z0-9_-]{43,128}$/.test(p.code_challenge)) {
-    return fail("invalid_request", "需要 PKCE（code_challenge_method=S256）。");
+    return reject("連線要求有誤：需要 PKCE（code_challenge_method=S256）。");
   }
-  if (!resourceOk(p.resource, url)) return fail("invalid_target", `resource 必須是 ${resourceOf(url)}。`);
+  if (!resourceOk(p.resource, url)) return reject(`連線要求有誤：resource 必須是 ${resourceOf(url)}。`);
 
-  if (!user || !sessionToken) {
-    if (isPost) return page("請重新登入", "<p>登入已逾時，請回到 AI 工具重新連線。</p>", 401);
-    return new Response(null, { status: 302, headers: { Location: `/?next=${encodeURIComponent(url.pathname + url.search)}`, "Cache-Control": "no-store" } });
-  }
   const company = await db.prepare("SELECT mcp_enabled FROM company WHERE id = ?").bind(user.company_id).first<{ mcp_enabled: number }>();
   if (!company?.mcp_enabled) {
-    if (isPost) return fail("access_denied", "公司管理員尚未開啟 AI 代理連線。");
-    const back = new URL(p.redirect_uri);
-    back.searchParams.set("error", "access_denied");
-    back.searchParams.set("error_description", "公司管理員尚未開啟 AI 代理連線。");
-    if (p.state) back.searchParams.set("state", p.state);
-    back.searchParams.set("iss", iss);
-    return page("尚未開啟 AI 代理連線", `<p>${esc(user.company_name)} 的管理員還沒有開啟 AI 代理連線（MCP）。請管理員到 RegReview 的「AI 代理連線」頁面開啟後再試。</p>
-      <p><a class="btn" href="${esc(back.toString())}">返回 ${esc(client.client_name)}</a></p>`, 403);
+    return page("尚未開啟 AI 代理連線", `<p>${esc(user.company_name)} 的管理員還沒有開啟 AI 代理連線（MCP）。請管理員到 RegReview 的「AI 代理連線」頁面開啟後，再回到 AI 工具重新連線。</p>`, 403);
   }
 
   const requested = parseScope(p.scope);
@@ -373,8 +395,9 @@ export async function authorize(
   const csrf = await consentToken(sessionToken);
 
   if (!isPost) {
-    const host = redirectHost(p.redirect_uri);
     const loopback = /^http:/.test(p.redirect_uri);
+    // An app scheme can name any host; show the whole URI so nothing looks like a website it isn't.
+    const host = /^https?:/i.test(p.redirect_uri) ? redirectHost(p.redirect_uri) : p.redirect_uri;
     const hidden = Object.entries({ ...p, csrf }).filter(([, v]) => v !== null)
       .map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(String(v))}">`).join("");
     return page(`${client.client_name} 要求存取 RegReview`, `
@@ -405,7 +428,10 @@ export async function authorize(
   if ((origin && origin !== url.origin) || form.get("csrf") !== csrf) {
     return page("無法完成授權", "<p>授權表單已失效，請回到 AI 工具重新連線。</p>", 403);
   }
-  if (form.get("decision") !== "allow") return fail("access_denied", "使用者拒絕授權。");
+  // Only now, after the user has seen who is asking, may errors go back to the client.
+  if (form.get("decision") !== "allow") {
+    return redirectWith(p.redirect_uri, { error: "access_denied", error_description: "使用者拒絕授權。", state: p.state, iss });
+  }
   const scope = ["read", ...(mayWrite && form.get("allow_write") === "1" ? ["write"] : [])].join(" ");
   const code = newSessionToken();
   await db.batch([
@@ -428,8 +454,13 @@ function redirectHost(uri: string): string {
 // ── Token endpoint ───────────────────────────────────────────────────────────
 
 async function readForm(request: Request): Promise<URLSearchParams> {
-  const text = await request.text();
-  if (text.length > 16 * 1024) throw new OAuthError("invalid_request", "請求內容過大。");
+  let text: string;
+  try {
+    text = await readTextLimited(request, 16 * 1024);
+  } catch (err) {
+    if (err instanceof BodyTooLarge) throw new OAuthError("invalid_request", "請求內容過大。");
+    throw err;
+  }
   if ((request.headers.get("Content-Type") ?? "").includes("application/json")) {
     const out = new URLSearchParams();
     try {
@@ -449,15 +480,22 @@ async function pkceS256(verifier: string): Promise<string> {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-async function issueTokens(db: D1Database, grantId: number, scope: string) {
+/**
+ * New access and refresh tokens for a grant. When rotating, `usedRefreshHash` must still be
+ * the grant's current refresh token: the swap is one conditional UPDATE, so two requests
+ * with the same refresh token cannot both succeed.
+ */
+async function issueTokens(db: D1Database, grantId: number, scope: string, usedRefreshHash?: string) {
   const access = TOKEN_PREFIX.access + newSessionToken();
   const refresh = TOKEN_PREFIX.refresh + newSessionToken();
+  const rotated = await db.prepare(
+    `UPDATE mcp_grant SET refresh_hash = ?, expires_at = ? WHERE id = ? ${usedRefreshHash ? "AND refresh_hash = ?" : ""} RETURNING id`,
+  ).bind(await hashToken(refresh), later(REFRESH_TTL_DAYS * 86400), grantId, ...(usedRefreshHash ? [usedRefreshHash] : [])).first<{ id: number }>();
+  if (!rotated) throw new OAuthError("invalid_grant", "refresh token 無效或已使用過。");
   await db.batch([
     db.prepare("DELETE FROM mcp_access_token WHERE grant_id = ? AND expires_at <= ?").bind(grantId, nowIso()),
     db.prepare("INSERT INTO mcp_access_token (token_hash, grant_id, expires_at) VALUES (?, ?, ?)")
       .bind(await hashToken(access), grantId, later(ACCESS_TTL_SECONDS)),
-    db.prepare("UPDATE mcp_grant SET refresh_hash = ?, expires_at = ? WHERE id = ?")
-      .bind(await hashToken(refresh), later(REFRESH_TTL_DAYS * 86400), grantId),
   ]);
   return oauthJson({ access_token: access, token_type: "Bearer", expires_in: ACCESS_TTL_SECONDS, refresh_token: refresh, scope });
 }
@@ -504,13 +542,13 @@ export async function token(request: Request, db: D1Database, url: URL): Promise
     }
 
     if (grantType === "refresh_token") {
-      const refresh = form.get("refresh_token") ?? "";
+      const refreshHash = await hashToken(form.get("refresh_token") ?? "");
       const grant = await db.prepare("SELECT id, user_id, client_id, scope, expires_at FROM mcp_grant WHERE refresh_hash = ? AND kind = 'oauth'")
-        .bind(await hashToken(refresh)).first<{ id: number; user_id: number; client_id: string; scope: string; expires_at: string | null }>();
+        .bind(refreshHash).first<{ id: number; user_id: number; client_id: string; scope: string; expires_at: string | null }>();
       if (!grant || !grant.expires_at || grant.expires_at <= nowIso()) throw new OAuthError("invalid_grant", "refresh token 無效或已過期。");
       if (grant.client_id !== clientId) throw new OAuthError("invalid_grant", "refresh token 不屬於此用戶端。");
       if (!(await userCanConnect(db, grant.user_id))) throw new OAuthError("invalid_grant", "帳號已停用，或公司已關閉 AI 代理連線。");
-      return await issueTokens(db, grant.id, grant.scope);
+      return await issueTokens(db, grant.id, grant.scope, refreshHash);
     }
 
     throw new OAuthError("unsupported_grant_type", "只支援 authorization_code 與 refresh_token。");

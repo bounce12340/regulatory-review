@@ -60,7 +60,8 @@ await step("without settings, a company uses the system's AI service", async () 
 
 await step("only admins change settings; bad keys, models and addresses are refused before saving", async () => {
   assert.equal((await member("PUT", "/api/ai/settings", ANTHROPIC)).status, 403);
-  const badKey = await a("PUT", "/api/ai/settings", { ...ANTHROPIC, api_key: "wrong-key" });
+  assert.match((await a("PUT", "/api/ai/settings", { ...ANTHROPIC, api_key: "short" })).data.error, /金鑰格式/);
+  const badKey = await a("PUT", "/api/ai/settings", { ...ANTHROPIC, api_key: "wrong-key-0123456789" });
   assert.equal(badKey.status, 400);
   assert.match(badKey.data.error, /連線測試失敗.*金鑰無效/);
   const badModel = await a("PUT", "/api/ai/settings", { ...ANTHROPIC, model: "missing-model" });
@@ -69,8 +70,16 @@ await step("only admins change settings; bad keys, models and addresses are refu
   const refused = await a("PUT", "/api/ai/settings", { ...ANTHROPIC, model: "refuse-model" });
   assert.equal(refused.status, 422);
   assert.match(refused.data.error, /安全政策/);
-  for (const base_url of ["http://evil.example/v1", "https://10.0.0.8/v1", "https://intranet/v1", "https://ai.corp/v1", "https://u:p@api.example.com/v1"]) {
+  for (const base_url of ["http://evil.example/v1", "https://10.0.0.8/v1", "https://intranet/v1", "https://ai.corp/v1", "https://u:p@api.example.com/v1",
+    "https://api.example.com/v1?", "https://api.example.com/v1#", "https://localhost./v1", "https://api.example.com:8443/v1"]) {
     assert.equal((await a("PUT", "/api/ai/settings", { ...ANTHROPIC, base_url })).status, 400, base_url);
+  }
+  // An endpoint that redirects is refused rather than followed, for both protocols.
+  for (const body of [{ ...ANTHROPIC, base_url: `${MOCK}/redirect` },
+    { provider: "openai_compatible", model: "gpt-mock", base_url: `${MOCK}/redirect/v1`, api_key: "byok-openai-key" }]) {
+    const r = await a("PUT", "/api/ai/settings", body);
+    assert.equal(r.status, 400, JSON.stringify(r.data));
+    assert.match(r.data.error, /轉址/);
   }
   assert.equal((await a("PUT", "/api/ai/settings", { ...ANTHROPIC, provider: "nope" })).status, 400);
   assert.equal((await a("PUT", "/api/ai/settings", { ...ANTHROPIC, model: "bad model;" })).status, 400);
@@ -97,6 +106,8 @@ await step("save Anthropic Claude: tested first, key never shown again", async (
   const memberView = await member("GET", "/api/ai/settings");
   assert.equal(memberView.status, 200);
   assert.equal(memberView.data.active.ai_provider, "Anthropic Claude");
+  assert.equal(memberView.data.company.key_hint, undefined, "the key hint is for admins");
+  assert.equal(memberView.data.company.base_url, undefined, "the address is for admins");
   assert.ok(!memberView.text.includes("byok-anthropic-key"));
   const cfg = (await member("GET", "/api/config")).data;
   assert.deepEqual([cfg.ai_enabled, cfg.ai_source, cfg.ai_model], [true, "company", "claude-opus-5-5"]);

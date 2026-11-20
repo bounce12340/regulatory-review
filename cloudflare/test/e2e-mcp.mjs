@@ -295,22 +295,32 @@ await step("dynamic client registration", async () => {
   clientId = r.data.client_id;
 });
 
-await step("authorize: login redirect, refusals that never leave the site, errors sent back", async () => {
+await step("authorize: login first, and nothing leaves the site before the user decides", async () => {
   const anon = client();
   const login = await anon("GET", authorizeUrl({ code_challenge: pkce().challenge }));
   assert.equal(login.status, 302);
   assert.match(login.headers.get("location"), /^\/\?next=%2Foauth%2Fauthorize%3F/);
+  // Anyone can register a client that returns to their own site. A crafted link must not
+  // bounce visitors there: anonymous visitors go to sign-in, signed-in ones see an error page.
+  const lure = (await anon("POST", "/oauth/register", { client_name: "Phish", redirect_uris: ["https://evil.example/landing"] })).data.client_id;
+  const crafted = authorizeUrl({ client_id: lure, redirect_uri: "https://evil.example/landing", response_type: "x", code_challenge: "" });
+  const anonLure = await anon("GET", crafted);
+  assert.equal(anonLure.status, 302);
+  assert.match(anonLure.headers.get("location"), /^\/\?next=/);
+  const signedLure = await a("GET", crafted);
+  assert.equal(signedLure.status, 400);
+  assert.equal(signedLure.headers.get("location"), null);
   // Unknown redirect URI or client: an error page, no redirect.
   assert.equal((await a("GET", authorizeUrl({ code_challenge: pkce().challenge, redirect_uri: "https://evil.example/cb" }))).status, 400);
   assert.equal((await a("GET", authorizeUrl({ code_challenge: pkce().challenge, client_id: "rrc_nope" }))).status, 400);
-  // Missing PKCE or a foreign resource: the error goes back to the client with iss.
+  // Missing PKCE or a foreign resource: also an error page, never a redirect.
   const noPkce = await a("GET", authorizeUrl({ code_challenge: "" }));
-  const loc = new URL(noPkce.headers.get("location"));
-  assert.equal(loc.searchParams.get("error"), "invalid_request");
-  assert.equal(loc.searchParams.get("iss"), BASE);
-  assert.equal(loc.searchParams.get("state"), "st-1");
+  assert.equal(noPkce.status, 400);
+  assert.equal(noPkce.headers.get("location"), null);
+  assert.match(noPkce.text, /PKCE/);
   const wrongResource = await a("GET", authorizeUrl({ code_challenge: pkce().challenge, resource: "https://other.example/mcp" }));
-  assert.equal(new URL(wrongResource.headers.get("location")).searchParams.get("error"), "invalid_target");
+  assert.equal(wrongResource.status, 400);
+  assert.equal(wrongResource.headers.get("location"), null);
   // The consent page names the client and where it returns to, and cannot be framed.
   const page = await a("GET", authorizeUrl({ code_challenge: pkce().challenge }));
   assert.match(page.text, /測試 AI 代理/);
