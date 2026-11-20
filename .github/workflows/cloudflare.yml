@@ -30,7 +30,7 @@ jobs:
       - name: Unit tests (incl. schema ↔ YAML consistency)
         run: npm test
 
-      - name: API, MCP and own-AI-key end-to-end tests (local Worker + local D1 + mock AI)
+      - name: API, MCP, API key and own-AI-key end-to-end tests (local Worker + local D1 + mock AI)
         run: |
           npx wrangler d1 migrations apply regulatory-review --local
           node test/mock-ollama.mjs &
@@ -40,4 +40,5 @@ jobs:
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:8787/api/health && break; sleep 1; done
           MOCK_OLLAMA_URL=http://127.0.0.1:8788 npm run test:e2e || (cat wrangler.log; exit 1)
           node test/e2e-mcp.mjs || (cat wrangler.log; exit 1)
+          node test/e2e-apikeys.mjs || (cat wrangler.log; exit 1)
           MOCK_OLLAMA_URL=http://127.0.0.1:8788 node test/e2e-ai-byok.mjs || (cat wrangler.log; exit 1)

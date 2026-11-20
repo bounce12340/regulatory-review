@@ -14,6 +14,7 @@
     "cf-typegen": "wrangler types",
     "test:e2e": "node test/e2e-api.mjs",
     "test:e2e:mcp": "node test/e2e-mcp.mjs",
+    "test:e2e:apikeys": "node test/e2e-apikeys.mjs",
     "test:e2e:byok": "node test/e2e-ai-byok.mjs",
     "vendor:pdfjs": "node scripts/vendor-pdfjs.mjs"
   },

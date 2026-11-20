@@ -802,6 +802,8 @@ table.compare .k-strip { min-width: 160px; vertical-align: middle; }
 table.grants td, table.audit td { vertical-align: middle; }
 table.grants .g-del { text-align: right; }
 table.audit tr.failed td { color: var(--seal); }
+table.endpoints td { vertical-align: top; }
+table.endpoints td.mono { white-space: nowrap; }
 @media (max-width: 700px) {
   table.grants thead { display: none; }
   table.grants tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 12px 0; border-bottom: 1px solid var(--rule); align-items: center; }
@@ -810,6 +812,12 @@ table.audit tr.failed td { color: var(--seal); }
   table.grants .g-del { grid-column: 2; grid-row: 1 / span 6; }
   table.grants .g-created::before { content: "建立 "; }
   table.grants .g-used::before { content: "最後使用 "; }
+  table.grants .g-expires::before { content: "到期 "; }
+  table.endpoints thead { display: none; }
+  table.endpoints tr { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; padding: 10px 0; border-bottom: 1px solid var(--rule-soft); }
+  table.endpoints td, table.endpoints tbody tr:last-child td { padding: 0; border: 0; }
+  table.endpoints td.mono { white-space: normal; overflow-wrap: anywhere; }
+  table.endpoints td:last-child { grid-column: 1 / -1; }
 }
 
 /* Consent screen of the OAuth flow (server-rendered by the Worker). */

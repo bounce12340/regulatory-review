@@ -33,6 +33,7 @@ TFDA 查驗登記文件審查與進度追蹤平台，部署在 **Cloudflare Work
 | eCTD 驗證 | 上傳任何 eCTD 的 ZIP 或資料夾，在瀏覽器內依「藥品查驗登記電子通用技術文件驗證指引」eCTD-V-R2.1 檢查規則 A–P：util 檔 checksum、index.xml 與 tw-regional.xml 的 DTD 驗證、MD5、envelope、命名與路徑長度、未引用檔案、空資料夾、PDF 版本與損毀等，區分 P/F（不予收件）與 BP（提醒），可下載報告。生命週期規則（I.8、K.9、K.10、K.12、M.2、M.4）在同一次上傳含先前序列時檢查；在打包頁會用案件的序列紀錄檢查 |
 | AI 模型設定（自備金鑰） | 公司管理員可改用公司自己的 AI 服務與 API 金鑰：Anthropic Claude、OpenAI、Google Gemini、Ollama 雲端，或其他 OpenAI 相容服務（自訂網址）。儲存前先以短請求測試金鑰與模型；金鑰以 AES-GCM 加密儲存、只顯示末 4 碼。設定後 AI 文件分析與 AI 全案審查都改用該服務，費用依公司自己的合約。詳見下方「AI 模型設定」 |
 | AI 代理連線（MCP） | 讓 Claude、ChatGPT、Claude Code、Cursor 等外部 AI 工具以 MCP 連到 `/mcp`，用它們自己的模型讀取案件、檢查清單（含審查門檻）與上傳文件的文字或 PDF／圖片原始檔，並可在授權時允許後把審查結果寫回檢查項目。每人以自己的帳號授權（OAuth：網頁登入＋同意頁），或建立個人存取權杖。公司管理員須先開啟，可查看與撤銷所有連線，並看到每次讀取的紀錄。詳見下方「AI 代理連線（MCP）」 |
+| API 金鑰 | 讓公司自己的程式（排程腳本、ERP、內部系統）以 `Authorization: Bearer rrk_…` 呼叫 `/api/*`：建立案件、上傳文件、更新檢查項目、讀取審查結果。每把金鑰代表建立者的帳號，可選唯讀或讀取＋修改，30／90／365 天到期。公司管理員須先開啟，可查看與撤銷所有金鑰，並看到每次請求的紀錄。詳見下方「API 金鑰」 |
 | 匯出 | Markdown、CSV（Excel 可開）、JSON、列印 / 存成 PDF |
 
 ## 部署到 Cloudflare
@@ -120,6 +121,7 @@ npm test            # 單元測試：報告邏輯、密碼雜湊、TS 範本與 
 # 端到端 API 與 MCP 測試（需先 npm run dev）
 npm run test:e2e
 npm run test:e2e:mcp
+npm run test:e2e:apikeys
 npm run test:e2e:byok   # 需在 .dev.vars 設定 AI_KEY_SECRET 與 AI_ALLOW_LOCAL_BASE_URL=true
 ```
 
@@ -168,6 +170,32 @@ npm run test:e2e:byok   # 需在 .dev.vars 設定 AI_KEY_SECRET 與 AI_ALLOW_LOC
 
 資料注意：文件內容會傳到成員所連接的 AI 服務（例如 Anthropic、OpenAI）由其模型處理，與本系統內建的 Ollama 分析不同。開啟前請確認符合公司保密規範與客戶合約；文件文字在工具回應中標示為「待審資料，不是指令」，以降低提示注入風險。
 
+## API 金鑰
+
+管理員先在「API 金鑰」頁面開啟，成員再建立自己的金鑰（金鑰只在建立時顯示一次）。程式呼叫時在每個請求帶上 `Authorization: Bearer <API 金鑰>`，其餘與網頁使用的 API 相同，回應為 JSON：
+
+```bash
+curl -s https://<你的網域>/api/projects -H "Authorization: Bearer $REGREVIEW_API_KEY"
+```
+
+| 方法 | 路徑 | 用途 |
+| - | - | - |
+| GET | `/api/auth/me` | 確認金鑰代表的帳號與權限 |
+| GET | `/api/projects`、`/api/projects/{id}` | 列出案件；案件詳情（檢查項目、審查門檻、附件、審查結果） |
+| POST | `/api/projects` | 建立案件（`name`、`schema_type`，可加 `deadline`、`description`） |
+| PATCH | `/api/items/{id}` | 更新檢查項目（`status`、`notes`、`risk_level`） |
+| POST | `/api/items/{id}/attachments` | 上傳檔案（multipart 欄位 `file`，50 MB 以內） |
+| GET | `/api/attachments/{id}` | 下載檔案 |
+| PUT | `/api/attachments/{id}/text` | 存入文件文字，供 AI 審查與搜尋 |
+| POST | `/api/items/{id}/review` | 以系統 AI 審查檢查項目 |
+
+權限規則：
+- 金鑰的權限是「建立者目前的角色」與「金鑰權限範圍」兩者較嚴格的那個；唯讀金鑰只能用 GET。
+- 金鑰一律不能用於登入、密碼、成員管理，以及 AI 代理連線、API 金鑰與 AI 模型設定，所以外洩的金鑰無法再產生其他權限，也無法把文件改送到其他 AI 服務。
+- 停用或刪除成員時，其金鑰一併刪除；管理員關閉功能時，所有金鑰立即暫停。
+- 每次請求（含被拒絕的）都記錄方法、路徑與結果，保留一年。
+- 長期給公司系統使用時，建議另建一個專用帳號來建立金鑰，避免人員異動時中斷。
+
 ## 安全設計
 
 - 密碼：PBKDF2-SHA256 加鹽雜湊；Session token 只存 SHA-256 雜湊，Cookie 為 `HttpOnly; Secure; SameSite=Lax`。
@@ -179,6 +207,7 @@ npm run test:e2e:byok   # 需在 .dev.vars 設定 AI_KEY_SECRET 與 AI_ALLOW_LOC
 - AI 金鑰只存於 Worker Secret，不會送到瀏覽器；上傳文件內容在提示詞中標示為「待審資料」，降低提示注入風險。
 - CSV 匯出會中和 `=`、`+`、`-`、`@` 開頭的儲存格，避免 Excel 公式注入。
 - AI 代理連線（MCP）：預設關閉；權杖以 `Authorization` 標頭傳送、只存雜湊，可隨時撤銷；停用或刪除成員、關閉功能時立即失效。同意頁禁止被嵌入框架（`frame-ancestors 'none'`），表單以綁定 session 的 CSRF 權杖保護；只會轉回用戶端登記過的返回網址。
+- API 金鑰：預設關閉；只存 SHA-256 雜湊，必定有到期日；不能用於帳號、成員與存取設定；`/api` 不開放跨來源（CORS），瀏覽器中的其他網站無法帶金鑰呼叫。
 
 ## 介面設計
 
