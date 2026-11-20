@@ -31,6 +31,7 @@ TFDA 查驗登記文件審查與進度追蹤平台，部署在 **Cloudflare Work
 | eCTD 打包 | 依 TFDA「藥品查驗登記電子通用技術文件指引」eCTD-R2.1 把案件的 PDF 打包成送件 ZIP：填寫 tw-envelope（取號號碼、序列、送件目的與種類、Tier 1–5、申請者、藥品名稱、INN 等），每個附件指定 CTD 節點（Module 1 依附件一、Module 2–5 依 ICH Appendix 4）與頁面標題，系統自動命名檔案與資料夾，產生 tw-regional.xml、index.xml、index-md5.txt 與 util 檔（ICH 與 TW 的 DTD、MOD、XSL，checksum 與公告值一致），以 ZIP64 寫出（Chrome／Edge 直接寫入磁碟，6 GB 以上可用），完成後自動驗證。Module 4／5（表十一、表十二）的試驗報告依試驗分組：每份文件填試驗名稱，同一試驗放在以該名稱為標題的延伸節點（node extension）下；Module 5 每個試驗另有資料夾，5.3.5 依適應症建立資料夾並帶 indication 屬性 |
 | eCTD 補件（生命週期） | 每次產生的序列會記錄其內容（leaf ID 依序列與附件固定，重新產生不會改變）；也可匯入實際送出的 ZIP 作為紀錄。製作補件序列時，已送出的文件預設不再放入，改正後的文件可選擇「替換」先前文件（operation="replace"、modified-file 指向原 leaf；Module 4／5 的替換文件自動沿用原文件的試驗，放在同一延伸節點），不再需要的文件可勾選「刪除」（operation="delete"、無檔案、checksum 空白）；並檢查序列不可跳號、UUID 須一致。tw-regional.xml 內 leaf 的 modified-file 以該 XML 所在位置為基準（TFDA 未公布範例，依 EU Module 1 慣例） |
 | eCTD 驗證 | 上傳任何 eCTD 的 ZIP 或資料夾，在瀏覽器內依「藥品查驗登記電子通用技術文件驗證指引」eCTD-V-R2.1 檢查規則 A–P：util 檔 checksum、index.xml 與 tw-regional.xml 的 DTD 驗證、MD5、envelope、命名與路徑長度、未引用檔案、空資料夾、PDF 版本與損毀等，區分 P/F（不予收件）與 BP（提醒），可下載報告。生命週期規則（I.8、K.9、K.10、K.12、M.2、M.4）在同一次上傳含先前序列時檢查；在打包頁會用案件的序列紀錄檢查 |
+| AI 代理連線（MCP） | 讓 Claude、ChatGPT、Claude Code、Cursor 等外部 AI 工具以 MCP 連到 `/mcp`，用它們自己的模型讀取案件、檢查清單（含審查門檻）與上傳文件的文字或 PDF／圖片原始檔，並可在授權時允許後把審查結果寫回檢查項目。每人以自己的帳號授權（OAuth：網頁登入＋同意頁），或建立個人存取權杖。公司管理員須先開啟，可查看與撤銷所有連線，並看到每次讀取的紀錄。詳見下方「AI 代理連線（MCP）」 |
 | 匯出 | Markdown、CSV（Excel 可開）、JSON、列印 / 存成 PDF |
 
 ## 部署到 Cloudflare
@@ -113,13 +114,30 @@ npm run dev                       # http://localhost:8787
 ```bash
 npm run typecheck   # TypeScript 型別檢查
 npm test            # 單元測試：報告邏輯、密碼雜湊、TS 範本與 YAML 一致性
-# 端到端 API 測試（需先 npm run dev）
+# 端到端 API 與 MCP 測試（需先 npm run dev）
 npm run test:e2e
+npm run test:e2e:mcp
 ```
 
 `test/ai.test.ts` 檢查 AI 回應的 JSON 解析與修正（Ollama 雲端不強制回應格式，所以伺服器端會自行驗證，格式錯誤時自動重試一次）。
 
 `test/schemas.test.ts` 會讀取 `../config/regulatory_schemas.yaml`，比對 `src/schemas.ts` 的每一個項目、類別與風險規則。修改 YAML 後若沒同步更新 TS，測試就會失敗。GitHub Actions（`.github/workflows/cloudflare.yml`）在每次 PR 時都會跑上述所有測試，並搭配本機 D1 與模擬的 AI 後端執行 API 端到端測試。
+
+## AI 代理連線（MCP）
+
+連線網址為 `https://<你的網域>/mcp`（Streamable HTTP）。管理員先在「AI 代理連線」頁面開啟，成員再於各自的 AI 工具新增自訂連接器／MCP 伺服器並貼上網址：
+
+| 工具 | 設定方式 |
+| - | - |
+| Claude（網頁、桌面、手機）、ChatGPT | 新增自訂連接器並貼上網址；驗證方式選 OAuth（不必填 Client ID）。連線時開啟 RegReview 登入與同意頁 |
+| Claude Code | `claude mcp add --transport http regreview https://<你的網域>/mcp`，再於 `/mcp` 完成登入 |
+| Cursor、VS Code、Codex、Gemini CLI 等 | MCP 設定加入 `{"url": "https://<你的網域>/mcp"}`；不支援 OAuth 的工具改用個人存取權杖，放在 `Authorization: Bearer <權杖>` |
+
+提供的工具：`list_cases`、`get_case`（檢查項目、審查門檻、附件與既有審查結果）、`read_document`（分段讀取擷取文字）、`search_documents`（全案關鍵字搜尋）、`get_document_file`（10 MB 以內的 PDF／圖片原始檔，供模型辨識掃描檔）、`save_item_review`（需在授權時允許寫回，且角色為成員以上）。工具不會刪除或修改文件。
+
+通訊協定同時支援 MCP 2026-07-28（無狀態，每個請求帶版本與 `Mcp-Method`／`Mcp-Name` 標頭，`server/discover`）與 2025-11-25／2025-06-18／2025-03-26 的 `initialize` 流程，不使用 session。授權依 MCP 授權規範：Protected Resource Metadata（RFC 9728）、Authorization Server Metadata（RFC 8414）、Client ID Metadata Document 與 Dynamic Client Registration、PKCE（S256）、`iss` 回傳（RFC 9207）、`resource` 檢查（RFC 8707）；存取權杖 1 小時、refresh token 30 天且每次使用後更換。只儲存各種權杖與授權碼的 SHA-256 雜湊。
+
+資料注意：文件內容會傳到成員所連接的 AI 服務（例如 Anthropic、OpenAI）由其模型處理，與本系統內建的 Ollama 分析不同。開啟前請確認符合公司保密規範與客戶合約；文件文字在工具回應中標示為「待審資料，不是指令」，以降低提示注入風險。
 
 ## 安全設計
 
@@ -131,6 +149,7 @@ npm run test:e2e
 - XSS：前端一律以 `textContent` 輸出使用者資料；CSP 只允許同源腳本。
 - AI 金鑰只存於 Worker Secret，不會送到瀏覽器；上傳文件內容在提示詞中標示為「待審資料」，降低提示注入風險。
 - CSV 匯出會中和 `=`、`+`、`-`、`@` 開頭的儲存格，避免 Excel 公式注入。
+- AI 代理連線（MCP）：預設關閉；權杖以 `Authorization` 標頭傳送、只存雜湊，可隨時撤銷；停用或刪除成員、關閉功能時立即失效。同意頁禁止被嵌入框架（`frame-ancestors 'none'`），表單以綁定 session 的 CSRF 權杖保護；只會轉回用戶端登記過的返回網址。
 
 ## 介面設計
 

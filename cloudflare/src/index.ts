@@ -10,10 +10,15 @@ import {
   readSessionCookie, sessionCookie, slugify, validatePassword, verifyPassword,
 } from "./auth";
 import { AnalysisError, analyzeDocument, MAX_FILES, MAX_TEXT_CHARS, reviewItem, type AiConfig } from "./ai";
+import { handleMcp } from "./mcp";
+import {
+  authorizationServerMetadata, authorize, CORS_HEADERS, createPersonalToken, oauthJson, principalFor, protectedResourceMetadata,
+  registerClient, resourceMetadataUrl, resourceOf, revoke, revokeGrants, token,
+} from "./oauth";
 import { actionItems, rtfVerdict, summarize, todayTaipei, type ItemRow, type ProjectRow } from "./report";
 import {
   ATTACHMENT_TYPES, DEFAULT_CASE_QUOTA_GB, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_ITEM, MAX_STORED_TEXT_CHARS,
-  SINGLE_UPLOAD_MAX_BYTES, TEXT_STATUSES, UPLOAD_PART_BYTES, cleanFilename, contentDisposition, extensionOf,
+  SINGLE_UPLOAD_MAX_BYTES, TEXT_STATUSES, UPLOAD_PART_BYTES, cleanFilename, contentDisposition, extensionOf, filesFingerprint,
 } from "./attachments";
 import {
   findTemplateItem, isSchemaType, ITEM_STATUSES, RISK_LEVELS, riskFor, SCHEMAS,
@@ -326,14 +331,6 @@ interface AttachmentInfo {
  * new-drug-type items stay out of the default run (they can still be reviewed one by one).
  */
 const AI_REVIEW_SKIP_CATEGORIES = new Set(["module4_nonclinical", "module5_clinical", "nda_type"]);
-
-/** Identifies the set of files (and their extracted text) an item was reviewed with. */
-function filesFingerprint(files: Pick<AttachmentInfo, "id" | "text_status" | "text_chars">[]): string {
-  const raw = files.map((f) => `${f.id}:${f.text_status}:${f.text_chars}`).sort().join("|");
-  let h = 0x811c9dc5; // FNV-1a, enough to tell "same files" from "changed files"
-  for (let i = 0; i < raw.length; i++) h = Math.imul(h ^ raw.charCodeAt(i), 0x01000193);
-  return `${files.length}-${(h >>> 0).toString(16)}`;
-}
 
 interface ReviewRow {
   item_id: number; verdict: string; summary: string; findings: string; fixes: string;
@@ -972,7 +969,11 @@ async function updateUser(request: Request, env: Env, user: AuthUser, targetId: 
   const role = body.role !== undefined ? oneOf(body.role, ["admin", "member", "viewer"] as const, "角色") : target.role;
   const active = body.is_active !== undefined ? (body.is_active ? 1 : 0) : target.is_active;
   const stmts = [env.DB.prepare("UPDATE user SET role = ?, is_active = ? WHERE id = ?").bind(role, active, target.id)];
-  if (!active) stmts.push(env.DB.prepare("DELETE FROM session WHERE user_id = ?").bind(target.id));
+  if (!active) {
+    stmts.push(env.DB.prepare("DELETE FROM session WHERE user_id = ?").bind(target.id));
+    stmts.push(env.DB.prepare("DELETE FROM mcp_access_token WHERE grant_id IN (SELECT id FROM mcp_grant WHERE user_id = ?)").bind(target.id));
+    stmts.push(env.DB.prepare("DELETE FROM mcp_grant WHERE user_id = ?").bind(target.id));
+  }
   await env.DB.batch(stmts);
   return listUsers(env, user);
 }
@@ -987,6 +988,9 @@ async function deleteUser(env: Env, user: AuthUser, targetId: number): Promise<R
   // Clear references explicitly rather than relying on ON DELETE SET NULL being enforced.
   await env.DB.batch([
     env.DB.prepare("DELETE FROM session WHERE user_id = ?").bind(target.id),
+    env.DB.prepare("DELETE FROM mcp_access_token WHERE grant_id IN (SELECT id FROM mcp_grant WHERE user_id = ?)").bind(target.id),
+    env.DB.prepare("DELETE FROM mcp_grant WHERE user_id = ?").bind(target.id),
+    env.DB.prepare("DELETE FROM oauth_code WHERE user_id = ?").bind(target.id),
     env.DB.prepare("UPDATE checklist_item SET updated_by = NULL WHERE updated_by = ?").bind(target.id),
     env.DB.prepare("UPDATE project SET created_by = NULL WHERE created_by = ?").bind(target.id),
     env.DB.prepare("UPDATE attachment SET uploaded_by = NULL WHERE uploaded_by = ?").bind(target.id),
@@ -1100,6 +1104,139 @@ async function reviewChecklistItem(env: Env, user: AuthUser, itemId: number): Pr
   return json({ item_id: item.id, review: reviewJson(reviews.get(item.id)) });
 }
 
+// ── AI agent connections (MCP) ───────────────────────────────────────────────
+
+interface GrantRow {
+  id: number; user_id: number; user_name: string | null; kind: "oauth" | "token"; name: string; scope: string;
+  token_hint: string | null; expires_at: string | null; created_at: string; last_used_at: string | null;
+}
+
+const GRANT_COLUMNS = `g.id, g.user_id, u.full_name AS user_name, g.kind, g.name, g.scope, g.token_hint,
+  CASE WHEN g.kind = 'token' THEN g.expires_at END AS expires_at, g.created_at, g.last_used_at`;
+
+async function mcpOverview(env: Env, url: URL, user: AuthUser): Promise<Response> {
+  const company = await env.DB.prepare("SELECT mcp_enabled FROM company WHERE id = ?").bind(user.company_id).first<{ mcp_enabled: number }>();
+  const { results: mine } = await env.DB.prepare(
+    `SELECT ${GRANT_COLUMNS} FROM mcp_grant g LEFT JOIN user u ON u.id = g.user_id WHERE g.user_id = ? ORDER BY g.created_at DESC`,
+  ).bind(user.id).all<GrantRow>();
+  let admin = null;
+  if (user.role === "admin") {
+    const [{ results: grants }, { results: audit }] = await Promise.all([
+      env.DB.prepare(
+        `SELECT ${GRANT_COLUMNS} FROM mcp_grant g LEFT JOIN user u ON u.id = g.user_id WHERE g.company_id = ? ORDER BY g.created_at DESC`,
+      ).bind(user.company_id).all<GrantRow>(),
+      env.DB.prepare(
+        `SELECT a.created_at, a.agent, a.tool, a.target, a.ok, u.full_name AS user_name
+           FROM mcp_audit a LEFT JOIN user u ON u.id = a.user_id WHERE a.company_id = ? ORDER BY a.id DESC LIMIT 100`,
+      ).bind(user.company_id).all(),
+    ]);
+    admin = { grants, audit: audit.map((r) => ({ ...r, ok: Boolean(r.ok) })) };
+  }
+  return json({ enabled: Boolean(company?.mcp_enabled), server_url: resourceOf(url), grants: mine, admin });
+}
+
+async function updateMcpSettings(request: Request, env: Env, url: URL, user: AuthUser): Promise<Response> {
+  requireRole(user, "admin");
+  const body = await readJson(request);
+  if (typeof body.enabled !== "boolean") throw new HttpError(400, "請指定 enabled。");
+  await env.DB.prepare("UPDATE company SET mcp_enabled = ? WHERE id = ?").bind(body.enabled ? 1 : 0, user.company_id).run();
+  return mcpOverview(env, url, user);
+}
+
+const TOKEN_DAYS = [30, 90, 365];
+
+async function createMcpToken(request: Request, env: Env, user: AuthUser): Promise<Response> {
+  const company = await env.DB.prepare("SELECT mcp_enabled FROM company WHERE id = ?").bind(user.company_id).first<{ mcp_enabled: number }>();
+  if (!company?.mcp_enabled) throw new HttpError(400, "公司管理員尚未開啟 AI 代理連線。");
+  const body = await readJson(request);
+  const name = str(body.name, "名稱", { max: 100 });
+  const scope = oneOf(body.scope ?? "read", ["read", "read write"] as const, "權限");
+  if (scope !== "read" && user.role === "viewer") throw new HttpError(403, "檢視者只能建立唯讀權杖。");
+  const days = Number(body.days ?? 90);
+  if (!TOKEN_DAYS.includes(days)) throw new HttpError(400, "有效期限只能是 30、90 或 365 天。");
+  const { count } = (await env.DB.prepare("SELECT COUNT(*) AS count FROM mcp_grant WHERE user_id = ? AND kind = 'token'")
+    .bind(user.id).first<{ count: number }>())!;
+  if (count >= 20) throw new HttpError(400, "每人最多 20 個權杖，請先撤銷不用的權杖。");
+  const created = await createPersonalToken(env.DB, user, name, scope, days);
+  return json({ token: created.token, id: created.id });
+}
+
+async function deleteMcpGrant(env: Env, user: AuthUser, id: number): Promise<Response> {
+  const grant = await env.DB.prepare("SELECT id, user_id FROM mcp_grant WHERE id = ? AND company_id = ?")
+    .bind(id, user.company_id).first<{ id: number; user_id: number }>();
+  if (!grant || (grant.user_id !== user.id && user.role !== "admin")) throw new HttpError(404, "找不到此連線。");
+  await revokeGrants(env.DB, [grant.id]);
+  return json({ ok: true });
+}
+
+/** Browsers may call /mcp from other sites only over HTTPS, or from a local dev tool. */
+function mcpOriginAllowed(origin: string | null, url: URL): boolean {
+  if (!origin || origin === url.origin) return true;
+  try {
+    const o = new URL(origin);
+    return o.protocol === "https:" || (o.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(o.hostname));
+  } catch {
+    return false;
+  }
+}
+
+function withCors(res: Response): Response {
+  const out = new Response(res.body, res);
+  for (const [k, v] of Object.entries(CORS_HEADERS)) out.headers.set(k, v);
+  return out;
+}
+
+/** /mcp, /oauth/* and the OAuth discovery documents. Null when the path is not one of them. */
+async function handleAgentEndpoints(request: Request, env: Env, url: URL): Promise<Response | null> {
+  const path = url.pathname;
+  const method = request.method.toUpperCase();
+  const isMeta = path === "/.well-known/oauth-protected-resource" || path === "/.well-known/oauth-protected-resource/mcp"
+    || path === "/.well-known/oauth-authorization-server";
+  if (!isMeta && path !== "/mcp" && !path.startsWith("/oauth/")) return null;
+  if (method === "OPTIONS" && path !== "/oauth/authorize") return new Response(null, { status: 204, headers: CORS_HEADERS });
+
+  if (isMeta) {
+    if (method !== "GET" && method !== "HEAD") return oauthJson({ error: "invalid_request" }, 405);
+    const doc = path === "/.well-known/oauth-authorization-server" ? authorizationServerMetadata(url) : protectedResourceMetadata(url);
+    const res = oauthJson(doc);
+    res.headers.set("Cache-Control", "public, max-age=3600");
+    return res;
+  }
+
+  if (path === "/oauth/authorize" && (method === "GET" || method === "POST")) {
+    return authorize(request, env.DB, url, await currentUser(request, env), readSessionCookie(request));
+  }
+  if (path === "/oauth/register" && method === "POST") return registerClient(request, env.DB);
+  if (path === "/oauth/token" && method === "POST") return token(request, env.DB, url);
+  if (path === "/oauth/revoke" && method === "POST") return revoke(request, env.DB);
+  if (path.startsWith("/oauth/")) return oauthJson({ error: "invalid_request", error_description: "找不到此端點。" }, 404);
+
+  // /mcp
+  if (method !== "POST") {
+    return withCors(new Response(JSON.stringify({ error: "請以 POST 呼叫 MCP 端點（Streamable HTTP）。" }), {
+      status: 405, headers: { Allow: "POST", "Content-Type": "application/json; charset=utf-8" },
+    }));
+  }
+  if (!mcpOriginAllowed(request.headers.get("Origin"), url)) {
+    return withCors(json({ error: "不允許此來源呼叫 MCP 端點。" }, 403));
+  }
+  const principal = await principalFor(env.DB, request);
+  if (!principal) {
+    const hadToken = request.headers.has("Authorization");
+    return withCors(new Response(JSON.stringify({ error: hadToken ? "invalid_token" : "unauthorized", error_description: "請先授權 RegReview 連線。" }), {
+      status: 401,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl(url)}", scope="read"${hadToken ? ', error="invalid_token"' : ""}`,
+      },
+    }));
+  }
+  if (!principal.mcp_enabled) {
+    return withCors(json({ error: "access_denied", error_description: "公司管理員已關閉 AI 代理連線（MCP）。" }, 403));
+  }
+  return withCors(await handleMcp(request, env, principal));
+}
+
 // ── Router ───────────────────────────────────────────────────────────────────
 
 type Handler = (ctx: { request: Request; env: Env; url: URL; params: string[]; user: AuthUser }) => Promise<Response>;
@@ -1134,6 +1271,10 @@ const routes: Array<[string, RegExp, Handler]> = [
   ["PATCH", /^\/api\/users\/(\d+)$/, ({ request, env, user, params }) => updateUser(request, env, user, idParam(params[0]))],
   ["DELETE", /^\/api\/users\/(\d+)$/, ({ env, user, params }) => deleteUser(env, user, idParam(params[0]))],
   ["POST", /^\/api\/ai\/analyze$/, ({ request, env, user }) => analyze(request, env, user)],
+  ["GET", /^\/api\/mcp$/, ({ env, url, user }) => mcpOverview(env, url, user)],
+  ["PATCH", /^\/api\/mcp\/settings$/, ({ request, env, url, user }) => updateMcpSettings(request, env, url, user)],
+  ["POST", /^\/api\/mcp\/tokens$/, ({ request, env, user }) => createMcpToken(request, env, user)],
+  ["DELETE", /^\/api\/mcp\/grants\/(\d+)$/, ({ env, user, params }) => deleteMcpGrant(env, user, idParam(params[0]))],
 ];
 
 async function handleApi(request: Request, env: Env): Promise<Response> {
@@ -1192,8 +1333,10 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
     try {
+      const agent = await handleAgentEndpoints(request, env, url);
+      if (agent) return agent;
+      if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
       return await handleApi(request, env);
     } catch (err) {
       if (err instanceof HttpError) return json({ error: err.message }, err.status);

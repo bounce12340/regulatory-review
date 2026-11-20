@@ -13,6 +13,7 @@
     "test": "vitest run",
     "cf-typegen": "wrangler types",
     "test:e2e": "node test/e2e-api.mjs",
+    "test:e2e:mcp": "node test/e2e-mcp.mjs",
     "vendor:pdfjs": "node scripts/vendor-pdfjs.mjs"
   },
   "devDependencies": {
