@@ -7,6 +7,7 @@ import { renderProjects } from "./views/projects.js";
 import { renderAi } from "./views/ai.js";
 import { renderEctd } from "./views/ectd.js";
 import { renderUsers, renderAccount } from "./views/admin.js";
+import { renderConnect } from "./views/connect.js";
 
 const app = document.getElementById("app");
 
@@ -17,6 +18,7 @@ const NAV = [
   { route: "projects", label: "案件管理", render: renderProjects },
   { route: "ai", label: "AI 文件分析", render: renderAi },
   { route: "ectd", label: "eCTD 送件", render: renderEctd },
+  { route: "connect", label: "AI 代理連線", render: renderConnect },
   { route: "users", label: "使用者管理", render: renderUsers, admin: true },
   { route: "account", label: "帳號設定", render: renderAccount, hidden: true },
 ];
@@ -47,6 +49,12 @@ function toggleTheme() {
 }
 
 // ── Auth screen ─────────────────────────────────────────────────────────────
+
+/** An AI agent's sign-in (/oauth/authorize) that sent the user here to log in first. */
+function pendingAuthorize() {
+  const next = new URLSearchParams(location.search).get("next");
+  return next && next.startsWith("/oauth/authorize?") ? next : null;
+}
 
 function renderAuth(mode = "login") {
   const registration = state.config?.registration_enabled;
@@ -117,6 +125,7 @@ function renderAuth(mode = "login") {
       h("div", { class: "inner" },
         h("h2", {}, register ? "建立公司帳號" : "登入 RegReview"),
         h("p", { class: "lead" }, register ? "第一位註冊的人會成為公司的管理員，之後可以邀請同事。" : "使用公司帳號登入。"),
+        pendingAuthorize() ? h("div", { class: "notice" }, "有 AI 工具要求連線到你的 RegReview 帳號。登入後會請你確認是否允許。") : null,
         register ? registerForm : loginForm,
         registration ? h("p", { class: "auth-switch" },
           register ? "已經有帳號？" : "公司還沒有帳號？",
@@ -191,7 +200,7 @@ function renderShell(active) {
     tab("overview", "總覽"), tab("timeline", "時程"), tab("projects", "案件"), tab("ai", "AI 分析"),
     h("button", {
       type: "button", "aria-label": "更多選項",
-      "aria-current": ["compare", "ectd", "users", "account"].includes(active) ? "page" : null,
+      "aria-current": ["compare", "ectd", "connect", "users", "account"].includes(active) ? "page" : null,
       onclick: () => shell.classList.toggle("nav-open"),
     }, "更多"),
   );
@@ -237,6 +246,8 @@ async function boot() {
   }
   state.config = config.value;
   state.user = me.status === "fulfilled" ? me.value.user : null;
+  const next = pendingAuthorize();
+  if (state.user && next) { location.replace(next); return; }
   if (state.user) {
     // A link straight to a case starts loading that case while the case list loads.
     const { route, params } = parseRoute();

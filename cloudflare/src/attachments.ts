@@ -64,3 +64,11 @@ export function contentDisposition(filename: string): string {
   const encoded = encodeURIComponent(filename).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
+
+/** Identifies the set of files (and their extracted text) an item was reviewed with. */
+export function filesFingerprint(files: { id: number; text_status: string; text_chars: number }[]): string {
+  const raw = files.map((f) => `${f.id}:${f.text_status}:${f.text_chars}`).sort().join("|");
+  let h = 0x811c9dc5; // FNV-1a, enough to tell "same files" from "changed files"
+  for (let i = 0; i < raw.length; i++) h = Math.imul(h ^ raw.charCodeAt(i), 0x01000193);
+  return `${files.length}-${(h >>> 0).toString(16)}`;
+}

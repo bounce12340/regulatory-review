@@ -790,3 +790,38 @@ table.compare .k-strip { min-width: 160px; vertical-align: middle; }
   table.doc-list .d-notes { grid-column: 1 / -1; }
   table.doc-list .d-notes:empty { display: none; }
 }
+
+/* ── AI agent connections (MCP) ───────────────────────────────────────── */
+.mono, .code-block { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+.copy-field { display: flex; gap: 8px; max-width: 680px; }
+.copy-field .input { flex: 1 1 auto; min-width: 0; font-size: var(--t-sm); }
+.code-block { font-size: var(--t-xs); background: var(--paper); border: 1px solid var(--rule-soft); border-radius: 3px; padding: 10px 12px; margin: 6px 0 10px; overflow-x: auto; white-space: pre; max-width: 100%; }
+.guide-body { max-width: 72ch; font-size: var(--t-sm); padding-bottom: 6px; }
+.sheet > details.disclose { margin-top: 4px; }
+.token-reveal { display: grid; gap: 8px; max-width: 720px; }
+table.grants td, table.audit td { vertical-align: middle; }
+table.grants .g-del { text-align: right; }
+table.audit tr.failed td { color: var(--seal); }
+@media (max-width: 700px) {
+  table.grants thead { display: none; }
+  table.grants tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 12px 0; border-bottom: 1px solid var(--rule); align-items: center; }
+  table.grants td, table.grants tbody tr:last-child td { padding: 0; border: 0; }
+  table.grants td:not(.g-del) { grid-column: 1; }
+  table.grants .g-del { grid-column: 2; grid-row: 1 / span 6; }
+  table.grants .g-created::before { content: "建立 "; }
+  table.grants .g-used::before { content: "最後使用 "; }
+}
+
+/* Consent screen of the OAuth flow (server-rendered by the Worker). */
+.consent { max-width: 580px; margin: 0 auto; padding: 40px 16px 64px; }
+.consent-brand { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; }
+.consent-title { font-family: var(--kai); font-size: var(--t-xl); margin: 0 0 14px; overflow-wrap: anywhere; }
+.consent .lead { margin: 0 0 12px; }
+.consent-list { margin: 0 0 16px; padding-left: 1.3em; }
+.consent-list li { margin-bottom: 4px; }
+.consent-facts { display: grid; gap: 6px; margin: 14px 0; font-size: var(--t-sm); }
+.consent-facts div { display: flex; gap: 10px; }
+.consent-facts dt { color: var(--ink-2); min-width: 6.5em; }
+.consent-facts dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.consent .notice { margin: 12px 0; }
+.consent .btn-row { margin-top: 18px; }
