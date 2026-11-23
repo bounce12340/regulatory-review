@@ -91,7 +91,7 @@ Worker → **Settings → Domains & Routes → Add → Custom domain**，輸入�
 |------|------|------|
 | `AI_MODEL` | `deepseek-v4.1-flash` | AI 分析使用的 Ollama 雲端模型，可用名稱見 [ollama.com/api/tags](https://ollama.com/api/tags) |
 | `AI_BASE_URL` | `https://ollama.com` | 選填。改成自架 Ollama 伺服器的網址時，須能從 Cloudflare 連到（不能是 `localhost`） |
-| `ALLOW_REGISTRATION` | `false` | 是否開放任何人註冊新公司（本機跑 `npm run test:e2e` 時需在 `.dev.vars` 設為 `true`） |
+| `ALLOW_REGISTRATION` | `false` | 是否開放任何人註冊新公司。未設定時視為關閉（本機跑 `npm run test:e2e` 時需在 `.dev.vars` 設為 `true`） |
 | `SESSION_TTL_HOURS` | `168` | 登入有效時間（小時） |
 | `PBKDF2_ITERATIONS` | `100000` | 密碼雜湊強度（10,000–100,000），見上方方案說明 |
 | `CASE_QUOTA_GB` | `20`（未設定時） | 每個案件的附件空間上限（GB）。R2 超過免費 10 GB 後每 GB 每月約 US$0.015 |
@@ -148,7 +148,7 @@ npm run test:e2e:byok   # 需在 .dev.vars 設定 AI_KEY_SECRET 與 AI_ALLOW_LOC
   - 模型因安全政策拒答時，會顯示明確的錯誤訊息。
 - OpenAI、Gemini 與其他服務的模型名稱變動頻繁，請依各服務目前提供的名稱填寫。
 - 所有服務都不送 `temperature`：部分新模型只接受預設值。
-- 自訂 API 網址只接受 `https://` 的公開網域，不接受 IP 位址或內部網路名稱。
+- 自訂 API 網址只接受標準連接埠的 `https://` 公開網域：不接受 IP 位址、內部網路名稱、結尾的 `.`、查詢參數或 `#`；儲存時只保留網域與路徑。呼叫各服務時不跟隨轉址，回應轉址的網址會被拒絕。錯誤訊息只顯示服務回傳的錯誤說明，不顯示原始回應內容。
 - 金鑰以 `AI_KEY_SECRET` 衍生的 AES-GCM 金鑰加密，並綁定公司 ID，資料庫被複製也無法直接取得金鑰；畫面與 API 只回傳末 4 碼。
 - 公司設定了自己的服務後，就不會改用系統預設服務。這確保文件只送到公司選擇的服務；金鑰無法解密時會直接報錯。
 
@@ -199,15 +199,17 @@ curl -s https://<你的網域>/api/projects -H "Authorization: Bearer $REGREVIEW
 ## 安全設計
 
 - 密碼：PBKDF2-SHA256 加鹽雜湊；Session token 只存 SHA-256 雜湊，Cookie 為 `HttpOnly; Secure; SameSite=Lax`。
-- 登入防暴力破解：同一 Email 15 分鐘內失敗 10 次即暫時鎖定。
+- 登入防暴力破解：每次驗證密碼前先記錄一次嘗試，15 分鐘內同一帳號從同一位址 10 次、同一位址 50 次、同一帳號（不分位址）100 次即暫時拒絕。依位址計算，別人無法藉故意輸錯把使用者鎖在外面；同時送出的大量請求也都會被計入。變更密碼時的「目前密碼」檢查使用同一套限制。
+- 變更密碼時，除了登出其他裝置，也會撤銷該使用者的 AI 代理連線、個人存取權杖、待用授權碼與 API 金鑰，確保帳號被盜用時留下的存取一併失效。
+- 請求內容一律邊讀邊計算大小，超過上限立即中止，不會先讀完整個請求。
 - 多租戶隔離：所有查詢皆以登入者的 `company_id` 篩選。
 - 角色權限：管理員 / 成員 / 檢視者（唯讀）。
 - CSRF：非 GET 請求必須為 JSON，且會檢查 `Origin`。
 - XSS：前端一律以 `textContent` 輸出使用者資料；CSP 只允許同源腳本。
 - AI 金鑰只存於 Worker Secret，不會送到瀏覽器；上傳文件內容在提示詞中標示為「待審資料」，降低提示注入風險。
 - CSV 匯出會中和 `=`、`+`、`-`、`@` 開頭的儲存格，避免 Excel 公式注入。
-- AI 代理連線（MCP）：預設關閉；權杖以 `Authorization` 標頭傳送、只存雜湊，可隨時撤銷；停用或刪除成員、關閉功能時立即失效。同意頁禁止被嵌入框架（`frame-ancestors 'none'`），表單以綁定 session 的 CSRF 權杖保護；只會轉回用戶端登記過的返回網址。
-- API 金鑰：預設關閉；只存 SHA-256 雜湊，必定有到期日；不能用於帳號、成員與存取設定；`/api` 不開放跨來源（CORS），瀏覽器中的其他網站無法帶金鑰呼叫。
+- AI 代理連線（MCP）：預設關閉；權杖以 `Authorization` 標頭傳送、只存雜湊，可隨時撤銷；停用或刪除成員、關閉功能時立即失效。同意頁禁止被嵌入框架（`frame-ancestors 'none'`），表單以綁定 session 的 CSRF 權杖保護；只會轉回用戶端登記過的返回網址。授權端點先要求登入，且使用者看到同意頁之前的錯誤一律顯示在本站頁面，不轉址到用戶端，避免被當成開放轉址（RFC 9700 §4.11.2）。refresh token 以單一條件式更新輪替，同一個 token 無法同時被用兩次。動態註冊每個位址每小時最多 20 個未使用的用戶端；未完成連線的用戶端一週後刪除。文件文字中的 `<document>` 標籤會被替換，無法跳出「待審資料」區塊。
+- API 金鑰：預設關閉；只存 SHA-256 雜湊，必定有到期日；不能用於帳號、成員、AI 模型設定與存取設定；`/api` 不開放跨來源（CORS），瀏覽器中的其他網站無法帶金鑰呼叫。
 
 ## 介面設計
 

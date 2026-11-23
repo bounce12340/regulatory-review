@@ -14,7 +14,8 @@ import {
   type ApiKeyPrincipal,
 } from "./apikeys";
 import { AnalysisError, analyzeDocument, MAX_FILES, MAX_TEXT_CHARS, reviewItem, type AiConfig } from "./ai";
-import { baseUrlProblem, companyAiRow, configFor, openKey, PROVIDERS, providerById, sealKey } from "./aisettings";
+import { BodyTooLarge, readTextLimited } from "./body";
+import { baseUrlProblem, companyAiRow, configFor, normalizeBaseUrl, openKey, PROVIDERS, providerById, sealKey } from "./aisettings";
 import { checkConnection } from "./llm";
 import { handleMcp } from "./mcp";
 import {
@@ -76,7 +77,10 @@ class HttpError extends Error {
 const MAX_JSON_BYTES = 64 * 1024;
 const MAX_AI_BYTES = MAX_TEXT_CHARS * 4 + 64 * 1024; // UTF-8 (≤4 bytes/char) + envelope
 const LOGIN_WINDOW_MINUTES = 15;
+/** Failed password checks allowed per window: per account from one address, per address, per account overall. */
 const LOGIN_MAX_FAILURES = 10;
+const LOGIN_MAX_PER_IP = 50;
+const LOGIN_MAX_PER_ACCOUNT = 100;
 
 // ── Response helpers ─────────────────────────────────────────────────────────
 
@@ -97,10 +101,13 @@ async function readJson<T = Record<string, unknown>>(request: Request, maxBytes 
   if (!type.toLowerCase().startsWith("application/json")) {
     throw new HttpError(415, "Content-Type 必須為 application/json。");
   }
-  const declared = Number(request.headers.get("Content-Length") ?? "0");
-  if (declared > maxBytes) throw new HttpError(413, "請求內容過大。");
-  const text = await request.text();
-  if (text.length > maxBytes) throw new HttpError(413, "請求內容過大。");
+  let text: string;
+  try {
+    text = await readTextLimited(request, maxBytes);
+  } catch (err) {
+    if (err instanceof BodyTooLarge) throw new HttpError(413, "請求內容過大。");
+    throw err;
+  }
   try {
     const value = JSON.parse(text);
     if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error();
@@ -206,7 +213,7 @@ async function uniqueSlug(env: Env, base: string, table: "company" | "project", 
 }
 
 async function register(request: Request, env: Env): Promise<Response> {
-  if ((env.ALLOW_REGISTRATION ?? "true") !== "true") throw new HttpError(403, "此站台未開放自行註冊，請聯絡管理員。");
+  if (env.ALLOW_REGISTRATION !== "true") throw new HttpError(403, "此站台未開放自行註冊，請聯絡管理員。");
   const body = await readJson(request);
   const companyName = str(body.company_name, "公司名稱", { max: 200 });
   const fullName = str(body.full_name, "姓名", { max: 200 });
@@ -247,12 +254,8 @@ async function login(request: Request, env: Env): Promise<Response> {
   const password = typeof body.password === "string" ? body.password : "";
   if (!email || !password) throw new HttpError(400, "請輸入電子郵件與密碼。");
 
-  const since = new Date(Date.now() - LOGIN_WINDOW_MINUTES * 60_000).toISOString();
-  const failures = await env.DB.prepare("SELECT COUNT(*) AS n FROM login_attempt WHERE email = ? AND created_at > ?")
-    .bind(email, since).first<{ n: number }>();
-  if ((failures?.n ?? 0) >= LOGIN_MAX_FAILURES) {
-    throw new HttpError(429, `登入失敗次數過多，請 ${LOGIN_WINDOW_MINUTES} 分鐘後再試。`);
-  }
+  const ip = request.headers.get("CF-Connecting-IP");
+  await reservePasswordAttempt(env, email, ip);
 
   const user = await env.DB.prepare(
     `SELECT u.id, u.password_hash FROM user u JOIN company c ON c.id = u.company_id
@@ -262,17 +265,9 @@ async function login(request: Request, env: Env): Promise<Response> {
   // Hash even for unknown emails so response time doesn't reveal which emails exist.
   dummyHash ??= hashPassword("not-a-real-password", iterations(env));
   const ok = await verifyPassword(password, user?.password_hash ?? (await dummyHash));
-  if (!user || !ok) {
-    const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
-    await env.DB.batch([
-      env.DB.prepare("INSERT INTO login_attempt (email, ip, created_at) VALUES (?, ?, ?)")
-        .bind(email, request.headers.get("CF-Connecting-IP"), nowIso()),
-      env.DB.prepare("DELETE FROM login_attempt WHERE created_at < ?").bind(dayAgo),
-    ]);
-    throw new HttpError(401, "電子郵件或密碼錯誤。");
-  }
-
-  await env.DB.prepare("DELETE FROM login_attempt WHERE email = ?").bind(email).run();
+  // A failed check keeps its reserved attempt; a successful one clears this address's record.
+  if (!user || !ok) throw new HttpError(401, "電子郵件或密碼錯誤。");
+  await env.DB.prepare("DELETE FROM login_attempt WHERE email = ? AND ip IS ?").bind(email, ip).run();
   // Re-hash when PBKDF2_ITERATIONS changed (e.g. raised after moving to the Paid plan).
   if (hashIterations(user.password_hash) !== iterations(env)) {
     await env.DB.prepare("UPDATE user SET password_hash = ? WHERE id = ?")
@@ -288,8 +283,41 @@ async function logout(request: Request, env: Env): Promise<Response> {
   return json({ ok: true }, 200, { "Set-Cookie": clearSessionCookie(new URL(request.url).protocol === "https:") });
 }
 
+/**
+ * Counts one password check before it runs, in the same batch as the counts, so parallel
+ * requests cannot all slip under the limit. Limits per account from one address keep a
+ * stranger from locking someone out; the per-address and per-account ceilings bound
+ * guessing spread over many accounts or many addresses.
+ */
+async function reservePasswordAttempt(env: Env, email: string, ip: string | null): Promise<void> {
+  const now = nowIso();
+  const since = new Date(Date.now() - LOGIN_WINDOW_MINUTES * 60_000).toISOString();
+  const [, counts] = await env.DB.batch<{ pair: number; per_ip: number; per_account: number }>([
+    env.DB.prepare("INSERT INTO login_attempt (email, ip, created_at) VALUES (?, ?, ?)").bind(email, ip, now),
+    env.DB.prepare(
+      `SELECT (SELECT COUNT(*) FROM login_attempt WHERE email = ?1 AND ip IS ?2 AND created_at > ?3) AS pair,
+              (SELECT COUNT(*) FROM login_attempt WHERE ip IS ?2 AND ip IS NOT NULL AND created_at > ?3) AS per_ip,
+              (SELECT COUNT(*) FROM login_attempt WHERE email = ?1 AND created_at > ?3) AS per_account`,
+    ).bind(email, ip, since),
+  ]);
+  const c = counts.results[0];
+  if (Math.random() < 0.02) {
+    await env.DB.prepare("DELETE FROM login_attempt WHERE created_at < ?").bind(new Date(Date.now() - 86_400_000).toISOString()).run();
+  }
+  if (c.pair > LOGIN_MAX_FAILURES || c.per_ip > LOGIN_MAX_PER_IP || c.per_account > LOGIN_MAX_PER_ACCOUNT) {
+    throw new HttpError(429, `登入失敗次數過多，請 ${LOGIN_WINDOW_MINUTES} 分鐘後再試。`);
+  }
+}
+
+/**
+ * Changes the password and cuts off every other way in: other sessions, AI agent
+ * connections and tokens, pending authorization codes, and API keys. After a suspected
+ * compromise this is the one step that removes anything an intruder set up.
+ */
 async function changePassword(request: Request, env: Env, user: AuthUser): Promise<Response> {
   const body = await readJson(request);
+  const ip = request.headers.get("CF-Connecting-IP");
+  await reservePasswordAttempt(env, user.email, ip);
   const row = await env.DB.prepare("SELECT password_hash FROM user WHERE id = ?").bind(user.id).first<{ password_hash: string }>();
   if (!row || !(await verifyPassword(String(body.current_password ?? ""), row.password_hash))) {
     throw new HttpError(400, "目前密碼不正確。");
@@ -299,8 +327,12 @@ async function changePassword(request: Request, env: Env, user: AuthUser): Promi
   const token = readSessionCookie(request)!;
   await env.DB.batch([
     env.DB.prepare("UPDATE user SET password_hash = ? WHERE id = ?").bind(await hashPassword(body.new_password as string, iterations(env)), user.id),
-    // Sign out every other device.
     env.DB.prepare("DELETE FROM session WHERE user_id = ? AND token_hash != ?").bind(user.id, await hashToken(token)),
+    env.DB.prepare("DELETE FROM mcp_access_token WHERE grant_id IN (SELECT id FROM mcp_grant WHERE user_id = ?)").bind(user.id),
+    env.DB.prepare("DELETE FROM mcp_grant WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM oauth_code WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM api_key WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM login_attempt WHERE email = ? AND ip IS ?").bind(user.email, ip),
   ]);
   return json({ ok: true });
 }
@@ -1043,7 +1075,8 @@ const AI_OFF = "AI 分析尚未啟用：請管理員在「AI 模型設定」設�
 async function aiConfigFor(env: Env, companyId: number): Promise<AiConfig> {
   const row = await companyAiRow(env.DB, companyId);
   if (row) {
-    const key = env.AI_KEY_SECRET ? await openKey(env.AI_KEY_SECRET, companyId, row.key_sealed) : null;
+    const key = env.AI_KEY_SECRET
+      ? await openKey(env.AI_KEY_SECRET, { companyId, provider: row.provider, baseUrl: row.base_url }, row.key_sealed) : null;
     if (!key) throw new HttpError(503, "無法讀取公司的 AI 服務金鑰（系統加密設定已變更），請管理員在「AI 模型設定」重新輸入金鑰。");
     return configFor(row, key);
   }
@@ -1069,9 +1102,10 @@ async function aiSettings(env: Env, user: AuthUser): Promise<Response> {
   return json({
     byok_available: Boolean(env.AI_KEY_SECRET),
     system: sys ? { provider: "Ollama 雲端", model: sys.model } : null,
+    // The address and key hint are for admins, who manage them.
     company: row ? {
-      provider: row.provider, base_url: row.base_url, model: row.model, key_hint: row.key_hint,
-      updated_at: row.updated_at, updated_by_name: row.updated_by_name,
+      provider: row.provider, model: row.model, updated_at: row.updated_at, updated_by_name: row.updated_by_name,
+      ...(user.role === "admin" ? { base_url: row.base_url, key_hint: row.key_hint } : {}),
     } : null,
     active: await aiSummary(env, user.company_id),
     providers: PROVIDERS,
@@ -1090,19 +1124,20 @@ async function putAiSettings(request: Request, env: Env, user: AuthUser): Promis
   if (!provider) throw new HttpError(400, "請選擇 AI 服務。");
   const model = str(body.model, "模型名稱", { max: 200 });
   if (!/^[\w.:/@+-]+$/.test(model)) throw new HttpError(400, "模型名稱只能包含英數字與 . : / @ + - _。");
-  const rawBase = str(body.base_url, "API 網址", { max: 300, required: provider.base_url === null }).replace(/\/+$/, "");
-  const baseUrl = rawBase && rawBase !== provider.base_url ? rawBase : null;
-  if (baseUrl) {
-    const problem = baseUrlProblem(baseUrl, env.AI_ALLOW_LOCAL_BASE_URL === "true");
+  const rawBase = str(body.base_url, "API 網址", { max: 300, required: provider.base_url === null });
+  if (rawBase) {
+    const problem = baseUrlProblem(rawBase, env.AI_ALLOW_LOCAL_BASE_URL === "true");
     if (problem) throw new HttpError(400, problem);
   }
+  const normalized = rawBase ? normalizeBaseUrl(rawBase) : null;
+  const baseUrl = normalized && normalized !== provider.base_url ? normalized : null;
   const existing = await companyAiRow(env.DB, user.company_id);
   let apiKey = typeof body.api_key === "string" ? body.api_key.trim() : "";
-  if (apiKey && (apiKey.length > 500 || /\s/.test(apiKey))) throw new HttpError(400, "API 金鑰格式不正確。");
+  if (apiKey && (apiKey.length < 12 || apiKey.length > 500 || /\s/.test(apiKey))) throw new HttpError(400, "API 金鑰格式不正確。");
   if (!apiKey) {
     // Keep the stored key only for the same service and address it was given for.
     if (!existing || existing.provider !== provider.id || existing.base_url !== baseUrl) throw new HttpError(400, "請輸入 API 金鑰。");
-    apiKey = (await openKey(env.AI_KEY_SECRET, user.company_id, existing.key_sealed)) ?? "";
+    apiKey = (await openKey(env.AI_KEY_SECRET, { companyId: user.company_id, provider: existing.provider, baseUrl: existing.base_url }, existing.key_sealed)) ?? "";
     if (!apiKey) throw new HttpError(400, "無法讀取已儲存的金鑰，請重新輸入 API 金鑰。");
   }
   const cfg = configFor({ provider: provider.id, base_url: baseUrl, model }, apiKey);
@@ -1118,7 +1153,8 @@ async function putAiSettings(request: Request, env: Env, user: AuthUser): Promis
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(company_id) DO UPDATE SET provider = excluded.provider, base_url = excluded.base_url, model = excluded.model,
        key_sealed = excluded.key_sealed, key_hint = excluded.key_hint, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
-  ).bind(user.company_id, provider.id, baseUrl, model, await sealKey(env.AI_KEY_SECRET, user.company_id, apiKey), apiKey.slice(-4), user.id, nowIso()).run();
+  ).bind(user.company_id, provider.id, baseUrl, model,
+    await sealKey(env.AI_KEY_SECRET, { companyId: user.company_id, provider: provider.id, baseUrl }, apiKey), apiKey.slice(-4), user.id, nowIso()).run();
   const res = await aiSettings(env, user);
   return json({ ...(await res.json() as object), tested_model: tested.model });
 }
@@ -1480,7 +1516,7 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext): Pro
     // Signed-in users see their company's AI service; the sign-in page sees the system's.
     const viewer = await currentUser(request, env);
     return json({
-      registration_enabled: (env.ALLOW_REGISTRATION ?? "true") === "true",
+      registration_enabled: env.ALLOW_REGISTRATION === "true",
       ...(await aiSummary(env, viewer?.company_id ?? null)),
       attachments: {
         max_bytes: MAX_ATTACHMENT_BYTES, single_max_bytes: SINGLE_UPLOAD_MAX_BYTES, part_bytes: UPLOAD_PART_BYTES,
@@ -1529,7 +1565,6 @@ async function handleKeyRequest(request: Request, env: Env, ctx: ExecutionContex
   const now = nowIso();
   const p = await apiKeyPrincipal(env.DB, raw, now);
   if (!p) return invalidKey("API 金鑰無效、已過期或已撤銷。");
-  if (!p.api_enabled) throw new HttpError(403, "公司管理員已關閉 API 金鑰。");
   const user: AuthUser = {
     id: p.id, email: p.email, full_name: p.full_name, role: p.role,
     company_id: p.company_id, company_name: p.company_name, company_slug: p.company_slug,
@@ -1537,6 +1572,8 @@ async function handleKeyRequest(request: Request, env: Env, ctx: ExecutionContex
   const path = url.pathname;
   let status = 500;
   try {
+    // Inside the try, so attempts while the switch is off are logged too.
+    if (!p.api_enabled) throw new HttpError(403, "公司管理員已關閉 API 金鑰。");
     const problem = keyRequestProblem(p.scope, method, path);
     if (problem) throw new HttpError(403, problem);
     let res: Response | null = null;

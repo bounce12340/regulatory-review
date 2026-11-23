@@ -204,4 +204,13 @@ await step("switch off, revoke and deactivate stop keys at once", async () => {
   assert.equal((await withKey(adminWrite, "GET", "/api/projects")).status, 200, "other keys keep working");
 });
 
+await step("changing the password revokes the user's keys", async () => {
+  const k = (await a("POST", "/api/api-keys", { name: "改密碼前", scope: "read", days: 30 })).data.key;
+  assert.equal((await withKey(k, "GET", "/api/projects")).status, 200);
+  assert.equal((await a("POST", "/api/auth/password", { current_password: "password-123", new_password: "password-456" })).status, 200);
+  assert.equal((await withKey(k, "GET", "/api/projects")).status, 401);
+  assert.equal((await withKey(adminWrite, "GET", "/api/projects")).status, 401);
+  assert.equal((await a("GET", "/api/api-keys")).data.keys.length, 0);
+});
+
 console.log(`\n${passed} API key end-to-end checks passed.`);

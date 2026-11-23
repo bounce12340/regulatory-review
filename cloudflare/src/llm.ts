@@ -58,6 +58,7 @@ const TIMEOUT = "AI 服務回應逾時，請改上傳較小的文件或稍後再
 
 /** The usual HTTP failures of any of the services, in the user's terms. */
 function httpError(cfg: AiConfig, status: number, detail: string): AnalysisError {
+  if (status >= 300 && status < 400) return new AnalysisError("AI 服務網址回應轉址，請填寫最終的 API 網址。", 400);
   if (status === 401 || status === 403) return new AnalysisError(`AI 服務金鑰無效或沒有權限，${fixKey(cfg)}。`, 503);
   if (status === 404) return new AnalysisError(`找不到 AI 模型「${cfg.model}」，${fixModel(cfg)}。`, 503);
   if (status === 429) return new AnalysisError("AI 服務請求過於頻繁或已達用量上限，請稍後再試。", 429);
@@ -85,7 +86,11 @@ function singleUserTurn(messages: ChatMessage[]): string {
 }
 
 async function chatAnthropic(cfg: AiConfig, messages: ChatMessage[], prior: Usage, opts: ChatOptions): Promise<ChatReply> {
-  const client = new Anthropic({ apiKey: cfg.apiKey, baseURL: cfg.baseURL, timeout: REQUEST_TIMEOUT_MS, maxRetries: 1 });
+  // Redirects are not followed: a configured endpoint must answer itself, not bounce the
+  // document text elsewhere. (Workers reject redirect: "error"; "manual" returns the 3xx.)
+  const client = new Anthropic({
+    apiKey: cfg.apiKey, baseURL: cfg.baseURL, timeout: REQUEST_TIMEOUT_MS, maxRetries: 1, fetchOptions: { redirect: "manual" },
+  });
   const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
   const fallback = FALLBACK_MODELS.has(cfg.model);
   let message: Anthropic.Beta.BetaMessage;
@@ -102,10 +107,11 @@ async function chatAnthropic(cfg: AiConfig, messages: ChatMessage[], prior: Usag
     message = await stream.finalMessage();
   } catch (err) {
     if (err instanceof Anthropic.APIConnectionTimeoutError) throw new AnalysisError(TIMEOUT, 504);
-    if (err instanceof Anthropic.APIConnectionError) throw new AnalysisError("無法連線至 AI 服務，請稍後再試。");
+    if (err instanceof Anthropic.APIConnectionError) throw new AnalysisError("無法連線至 AI 服務（服務網址無回應或回應轉址），請稍後再試。");
     if (err instanceof Anthropic.APIError && typeof err.status === "number") {
-      const detail = (err.error as { error?: { message?: string } } | undefined)?.error?.message ?? err.message;
-      throw httpError(cfg, err.status, String(detail).slice(0, 300));
+      // Only the provider's structured message is shown, never the raw response.
+      const detail = (err.error as { error?: { message?: unknown } } | undefined)?.error?.message;
+      throw httpError(cfg, err.status, typeof detail === "string" ? detail.slice(0, 300) : "");
     }
     throw err;
   }
@@ -134,6 +140,7 @@ async function chatOpenAI(cfg: AiConfig, messages: ChatMessage[], prior: Usage, 
   try {
     res = await fetch(`${cfg.baseURL.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
+      redirect: "manual",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.apiKey}` },
       // No temperature: several current reasoning models accept only their default.
       body: JSON.stringify({ model: cfg.model, messages }),
@@ -143,15 +150,17 @@ async function chatOpenAI(cfg: AiConfig, messages: ChatMessage[], prior: Usage, 
     if (err instanceof DOMException && err.name === "TimeoutError") throw new AnalysisError(TIMEOUT, 504);
     throw new AnalysisError("無法連線至 AI 服務，請稍後再試。");
   }
-  const text = await res.text().catch(() => "");
+  if (res.status >= 300 && res.status < 400) throw new AnalysisError("AI 服務網址回應轉址，請填寫最終的 API 網址。", 400);
+  const text = await readResponseText(res);
   let body: Record<string, unknown> | null = null;
   try { body = JSON.parse(text); } catch { /* not JSON */ }
-  const errBody = body?.error as { message?: string } | string | undefined;
-  const detail = (typeof errBody === "string" ? errBody : errBody?.message ?? text).slice(0, 300);
+  // Only the provider's structured message is shown, never the raw response.
+  const errBody = body?.error as { message?: unknown } | string | undefined;
+  const detail = (typeof errBody === "string" ? errBody : typeof errBody?.message === "string" ? errBody.message : "").slice(0, 300);
   if (!res.ok) throw httpError(cfg, res.status, detail);
   if (!body) throw new AnalysisError("AI 服務回應格式無法解析，請確認服務網址是否為 OpenAI 相容端點。");
   const choice = (body.choices as Array<{ message?: { content?: unknown; refusal?: unknown }; finish_reason?: string }> | undefined)?.[0];
-  if (!choice) throw new AnalysisError(`AI 服務沒有回傳結果：${detail}`);
+  if (!choice) throw new AnalysisError(detail ? `AI 服務沒有回傳結果：${detail}` : "AI 服務沒有回傳結果，請確認服務網址是否為 OpenAI 相容端點。");
   if (choice.finish_reason === "length") throw new AnalysisError(TRUNCATED, 422);
   if (typeof choice.message?.refusal === "string" && choice.message.refusal) {
     throw new AnalysisError("AI 模型依其安全政策拒絕處理這份內容，請檢查文件內容或改用其他模型。", 422);
@@ -174,6 +183,7 @@ async function chatOllama(cfg: AiConfig, messages: ChatMessage[], prior: Usage):
   try {
     res = await fetch(`${cfg.baseURL.replace(/\/+$/, "")}/api/chat`, {
       method: "POST",
+      redirect: "manual",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.apiKey}` },
       // Streaming keeps the connection busy on long documents; we only keep the final text.
       body: JSON.stringify({ model: cfg.model, messages, stream: true, options: { temperature: 0.2 } }),
@@ -183,10 +193,8 @@ async function chatOllama(cfg: AiConfig, messages: ChatMessage[], prior: Usage):
     if (err instanceof DOMException && err.name === "TimeoutError") throw new AnalysisError(TIMEOUT, 504);
     throw new AnalysisError("無法連線至 AI 服務，請稍後再試。");
   }
-  if (!res.ok) {
-    const detail = (await res.text().catch(() => "")).slice(0, 300);
-    throw httpError(cfg, res.status, errorMessage(detail));
-  }
+  if (res.status >= 300 && res.status < 400) throw new AnalysisError("AI 服務網址回應轉址，請填寫最終的 API 網址。", 400);
+  if (!res.ok) throw httpError(cfg, res.status, errorMessage(await readResponseText(res)));
 
   let content = "";
   let model = cfg.model;
@@ -198,6 +206,7 @@ async function chatOllama(cfg: AiConfig, messages: ChatMessage[], prior: Usage):
     if (typeof chunk.error === "string") throw new AnalysisError(`AI 服務錯誤：${chunk.error}`);
     const msg = chunk.message as { content?: string } | undefined;
     if (typeof msg?.content === "string") content += msg.content;
+    if (content.length > MAX_REPLY_CHARS) throw new AnalysisError(TRUNCATED, 422);
     if (typeof chunk.model === "string") model = chunk.model;
     if (chunk.done) {
       doneReason = String(chunk.done_reason ?? "");
@@ -226,8 +235,34 @@ async function* ndjsonLines(body: ReadableStream<Uint8Array>): AsyncGenerator<st
   if (buf.trim()) yield buf.trim();
 }
 
+/** The `error` string of a JSON error body, never the raw body. */
 function errorMessage(body: string): string {
-  try { return String(JSON.parse(body).error ?? body); } catch { return body || "未知錯誤"; }
+  try {
+    const e = JSON.parse(body).error;
+    return typeof e === "string" ? e.slice(0, 300) : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Longest reply kept from any service; real replies are far shorter. */
+const MAX_REPLY_CHARS = 2_000_000;
+
+/** A response body as text, at most MAX_REPLY_CHARS bytes, so an endpoint cannot exhaust memory. */
+async function readResponseText(res: Response): Promise<string> {
+  if (!res.body) return "";
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let out = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    out += value;
+    if (out.length > MAX_REPLY_CHARS) {
+      await reader.cancel().catch(() => {});
+      throw new AnalysisError(TRUNCATED, 422);
+    }
+  }
+  return out;
 }
 
 /** A tiny request that proves the key and model work, before a company saves them. */

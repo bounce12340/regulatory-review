@@ -14,15 +14,21 @@ export function parseDtd(text, resolve = () => undefined) {
   const elements = new Map();
   const attlists = new Map();
 
+  // Real DTDs expand to a few hundred KB; a crafted one could expand without end.
+  const MAX_EXPANDED = 2_000_000;
   const expand = (s, depth = 0) => {
     if (depth > 20) throw new Error("DTD 參數實體巢狀過深");
-    return s.replace(/%([A-Za-z_][\w.-]*);/g, (_, name) => {
+    const out = s.replace(/%([A-Za-z_][\w.-]*);/g, (_, name) => {
       if (!entities.has(name)) throw new Error(`DTD 未定義參數實體 %${name};`);
       return expand(entities.get(name), depth + 1);
     });
+    if (out.length > MAX_EXPANDED) throw new Error("DTD 參數實體展開後過大");
+    return out;
   };
 
+  let processDepth = 0;
   const process = (src) => {
+    if (++processDepth > 50) throw new Error("DTD 參數實體巢狀過深");
     src = src.replace(/<!--[\s\S]*?-->/g, " ");
     // Declarations and parameter-entity references, in order (later ones may use earlier).
     const re = /<!(ENTITY|ELEMENT|ATTLIST)\s+((?:[^>"']|"[^"]*"|'[^']*')*)>|%([A-Za-z_][\w.-]*);/g;
@@ -33,6 +39,7 @@ export function parseDtd(text, resolve = () => undefined) {
         const value = entities.get(m[3]);
         if (value === undefined) throw new Error(`DTD 未定義參數實體 %${m[3]};`);
         process(value);
+        processDepth--;
         continue;
       }
       const [, kind, body] = m;
