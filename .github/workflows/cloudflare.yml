@@ -1,4 +1,4 @@
-name: Cloudflare site — checks
+name: Cloudflare site — checks and deploy
 
 on:
   push:
@@ -6,6 +6,8 @@ on:
     paths: ["cloudflare/**", "config/regulatory_schemas.yaml", ".github/workflows/cloudflare.yml"]
   pull_request:
     paths: ["cloudflare/**", "config/regulatory_schemas.yaml", ".github/workflows/cloudflare.yml"]
+  # Re-deploy main by hand (Actions → this workflow → Run workflow).
+  workflow_dispatch:
 
 jobs:
   test:
@@ -42,3 +44,69 @@ jobs:
           node test/e2e-mcp.mjs || (cat wrangler.log; exit 1)
           node test/e2e-apikeys.mjs || (cat wrangler.log; exit 1)
           MOCK_OLLAMA_URL=http://127.0.0.1:8788 node test/e2e-ai-byok.mjs || (cat wrangler.log; exit 1)
+
+  # Deploys main to Cloudflare once the checks pass. Needs the repository secret
+  # CLOUDFLARE_API_TOKEN (and CLOUDFLARE_ACCOUNT_ID when the token can reach several
+  # accounts); without it the job only warns, so forks and fresh clones stay green.
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: production
+    # One deploy at a time; a newer push waits instead of cancelling a half-done deploy.
+    concurrency:
+      group: cloudflare-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: cloudflare
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      # Checkout first: the default working directory (cloudflare/) must exist for every step.
+      - uses: actions/checkout@v4
+
+      - name: Check for the Cloudflare token
+        id: token
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::warning::CLOUDFLARE_API_TOKEN is not set, so nothing was deployed. Add it under Settings → Secrets and variables → Actions."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.token.outputs.present == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloudflare/package-lock.json
+
+      - run: npm ci
+        if: steps.token.outputs.present == 'true'
+
+      # Migrations first: they only add tables and columns, so the running version keeps
+      # working, and the new version never starts against an old schema.
+      - name: Apply D1 migrations
+        if: steps.token.outputs.present == 'true'
+        run: npx wrangler d1 migrations apply regulatory-review --remote
+
+      - name: Deploy Worker
+        if: steps.token.outputs.present == 'true'
+        run: npx wrangler deploy
+
+      # Set the repository variable SITE_URL (e.g. https://regulatory-review.<subdomain>.workers.dev)
+      # to check the live site after each deploy.
+      - name: Smoke test
+        if: steps.token.outputs.present == 'true' && vars.SITE_URL != ''
+        env:
+          SITE_URL: ${{ vars.SITE_URL }}
+        run: |
+          for i in $(seq 1 10); do curl -sf "$SITE_URL/api/health" && break; sleep 3; done
+          curl -sf "$SITE_URL/api/health" > /dev/null
+          test "$(curl -s -o /dev/null -w '%{http_code}' "$SITE_URL/")" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$SITE_URL/mcp")" = 401

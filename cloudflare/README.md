@@ -56,7 +56,23 @@ TFDA 查驗登記文件審查與進度追蹤平台，部署在 **Cloudflare Work
 
 > 若建置紀錄顯示 `d1 migrations apply` 權限不足（Builds 使用的 API token 缺少 D1 編輯權限），可在本機執行一次 `npx wrangler login && npx wrangler d1 migrations apply regulatory-review --remote`，或在 Builds 設定中改用具 D1 Edit 權限的 API token。
 
-### 方法 B：用指令部署
+### 方法 B：GitHub Actions 自動部署
+
+`.github/workflows/cloudflare.yml` 在 main 有更新且測試全部通過後，依序執行「套用 D1 遷移 → 部署 Worker → 檢查網站」。也可以在 GitHub → **Actions** → 本 workflow → **Run workflow** 手動重新部署 main。
+
+設定（只需一次，在 GitHub repo → **Settings → Secrets and variables → Actions**）：
+
+| 名稱 | 類型 | 說明 |
+| --- | --- | --- |
+| `CLOUDFLARE_API_TOKEN` | Secret | Cloudflare Dashboard → **My Profile → API Tokens → Create Token**，用「Edit Cloudflare Workers」範本，再加上 **Account → D1 → Edit** 權限 |
+| `CLOUDFLARE_ACCOUNT_ID` | Secret（選填） | Token 可存取多個帳戶時才需要；在 Workers & Pages 首頁右側可找到 |
+| `SITE_URL` | Variable（選填） | 例如 `https://regulatory-review.<你的子網域>.workers.dev`；設定後每次部署完會檢查網站與 `/api/health` |
+
+未設定 `CLOUDFLARE_API_TOKEN` 時，部署步驟只會顯示警告、不會失敗。Worker 的 Secrets（`OLLAMA_API_KEY`、`AI_KEY_SECRET` 等）存在 Cloudflare，不需放進 GitHub，部署也不會更動它們。
+
+> 方法 A 與方法 B 擇一使用，兩者同時開啟會在每次 push 時部署兩次。
+
+### 方法 C：用指令部署
 
 ```bash
 cd cloudflare
